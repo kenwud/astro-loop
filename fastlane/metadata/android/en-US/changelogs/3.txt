@@ -1,13 +1,13 @@
-Dying now visually rewinds the run instead of just freezing it.
+Dying now rewinds the run rather than freezing it.
 
 Shop cards turn over: tap to read an upgrade, hold to buy it.
 
-Music and sound effects can be silenced separately, and the slot machine display spells out what each button press did.
+Music and sound effects can be silenced separately.
 
-TB-26 explains some mechanics on your first two flights, reports what each run earned, and drops a hint when you lose at 10 minutes.
+TB-26 explains some mechanics early on, reports what each run earned, and hints when you lose at 10 minutes.
 
-Endless mode no longer flattens out: asteroid health keeps climbing, so runs actually end.
+Endless mode no longer flattens out: asteroid health keeps climbing, so runs end.
 
-Locked pilots show what the bar knows about them instead of a "?".
+Locked pilots show what the bar knows instead of a "?".
 
-Fixes a crash (hopefully) on death reported on Android 9, and a bug where a run could finish without paying out.
+Fixes a crash on death on Android 9, and runs that finished without paying out.
