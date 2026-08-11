@@ -62,7 +62,7 @@ Copyright (C) 2026 PubDeer
 
 ## Support
 
-If you enjoy Astro Loop, you can support development on
+If you enjoy Astro Loop, you can support development on [GitHub Sponsors](https://github.com/sponsors/PubDeer) or 
 [Ko-fi](https://ko-fi.com/pubdeer).
 
 No cookies. No trackers. No nonsense.
