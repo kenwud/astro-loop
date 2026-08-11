@@ -90,6 +90,19 @@ class MainActivity : ComponentActivity() {
         hangarView?.pause()
 
         gameView = GameSurfaceView(this, shipId, pilotId) { yenEarned, fadeFromWhite ->
+            // Bank the payout HERE, before the hop to the UI thread.
+            //
+            // This runs on the game thread, inside GameThread's catch(Throwable), whereas
+            // returnToHangar below runs on the UI thread with no such net — so anything that
+            // throws while rebuilding the hangar used to cost the player the run's earnings
+            // while still counting the run toward pilot unlocks. Two separate player reports
+            // describe exactly that: one froze on the way back, one crashed on the death
+            // cutscene, and both lost the money.
+            //
+            // Banking the amount passed rather than state.goldCollected is deliberate: five of
+            // the eight onGameOver call sites pass 0 on purpose — the reckoning win, the
+            // timeline shift and the debug exits grant nothing however much was collected.
+            if (yenEarned > 0) PersistenceManager(this).addYen(yenEarned)
             runOnUiThread {
                 returnToHangar(yenEarned, fadeFromWhite)
             }
@@ -103,9 +116,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun returnToHangar(yenEarned: Int, fadeFromWhite: Boolean = false) {
+        // Stop the producer first, and synchronously. pause() joins the game thread, so once this
+        // returns no further frame can be posted for the outgoing surface.
         gameView?.pause()
         gameView = null
 
+        // Then let the current frame retire before swapping. setContentView destroys the outgoing
+        // SurfaceView's surface, and a draw still sitting in HWUI's queue for that surface aborts
+        // the process on some drivers rather than failing softly: on a reported Samsung Android 9
+        // stack it asserts in EglManager::damageFrame with EGL_BAD_ACCESS.
+        //
+        // decorView rather than the outgoing view: it stays attached, so the post is guaranteed to
+        // run. Costs one frame on the way back to the bar.
+        window.decorView.post {
+            if (!isFinishing && !isDestroyed) {
+                swapToHangar(yenEarned, fadeFromWhite)
+            }
+        }
+    }
+
+    private fun swapToHangar(yenEarned: Int, fadeFromWhite: Boolean) {
         if (hangarView == null) {
             hangarView = HangarSurfaceView(this) { shipId, pilotId ->
                 runOnUiThread {

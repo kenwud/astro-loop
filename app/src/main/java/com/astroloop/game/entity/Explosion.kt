@@ -17,7 +17,24 @@ data class Debris(
     val rotationSpeed: Float,
     val size: Float,
     val color: Int,
-    var lifetime: Float
+    var lifetime: Float,
+    /**
+     * Where this piece was when the ship broke apart, so the crystal rewind can put it back.
+     *
+     * Captured rather than recomputed: the spawn angle includes `Random.nextFloat() * 0.5f`, so
+     * the scatter pattern cannot be derived a second time.
+     */
+    val origin: Vector2 = Vector2(position.x, position.y),
+    /** Lifetime at spawn, so the rewind can restore the fade as well as the position. */
+    val startLifetime: Float = lifetime,
+    /**
+     * Position and fade at the moment the rewind began — the fixed point every `rewind(progress)`
+     * call interpolates *from*. Reading the live position instead would compound each frame and
+     * the pieces would never arrive.
+     */
+    var scatterX: Float = position.x,
+    var scatterY: Float = position.y,
+    var scatterLifetime: Float = lifetime
 )
 
 /**
@@ -29,6 +46,56 @@ class ShipExplosion {
     var isActive: Boolean = false
     var timer: Float = 0f
     var duration: Float = 2f
+
+    /**
+     * Keep the debris after their lifetime expires, and stay active past [duration].
+     *
+     * Off by default because **enemies use this same class** — one instance per enemy death — and
+     * lingering wreckage all over a busy fight is not wanted. Only the player's death explosion
+     * sets it, so its pieces are still present (faded to nothing) when the crystal starts and can
+     * be flown back together.
+     *
+     * Holding does not change what the player sees on the way out: lifetime still ticks down, so
+     * the scatter and fade are exactly as before. It only stops the removal.
+     */
+    var holdDebris: Boolean = false
+
+    /**
+     * Extra alpha multiplier on every piece, driven by [rewind].
+     *
+     * Sits alongside the per-piece lifetime fade rather than replacing it, so the two stay
+     * separable: lifetime is the explosion's own fade, this is the handover to the restored ship.
+     */
+    var debrisAlphaScale: Float = 1f
+
+    companion object {
+        /**
+         * Where in the rewind the pieces stop being the picture and the ship takes over.
+         *
+         * Before this, the debris fly home at full strength. After it they fade out while the
+         * intact ship fades in over them, so the moment of becoming whole is a dissolve rather
+         * than a pop.
+         *
+         * The first build had no handover at all, and the result was exactly what you would
+         * expect: the pieces arrived in the right places and stayed pieces — a tidy pile of debris
+         * where a ship should be.
+         */
+        const val REASSEMBLE_CROSSFADE_START = 0.8f
+
+        /**
+         * How solid the restored ship is at [progress] through the rewind.
+         *
+         * Zero until [REASSEMBLE_CROSSFADE_START], then ramping to fully drawn as the rewind ends.
+         * Paired with [debrisAlphaScale], which is its exact complement, so the two always sum to
+         * one and the swap cannot flicker.
+         */
+        fun shipAlphaAt(progress: Float): Float {
+            val t = progress.coerceIn(0f, 1f)
+            if (t <= REASSEMBLE_CROSSFADE_START) return 0f
+            return ((t - REASSEMBLE_CROSSFADE_START) / (1f - REASSEMBLE_CROSSFADE_START))
+                .coerceIn(0f, 1f)
+        }
+    }
 
     // Flash effect
     var flashIntensity: Float = 1f
@@ -96,7 +163,7 @@ class ShipExplosion {
             val d = iterator.next()
             d.lifetime -= deltaTime
 
-            if (d.lifetime <= 0) {
+            if (d.lifetime <= 0 && !holdDebris) {
                 iterator.remove()
             } else {
                 // Update position
@@ -110,8 +177,41 @@ class ShipExplosion {
         }
 
         // End explosion after duration
-        if (timer >= duration) {
+        if (timer >= duration && !holdDebris) {
             isActive = false
+        }
+    }
+
+    /** Freeze the current scattered state as the point the rewind interpolates back from. */
+    fun captureScatter() {
+        for (d in debris) {
+            d.scatterX = d.position.x
+            d.scatterY = d.position.y
+            d.scatterLifetime = d.lifetime
+        }
+    }
+
+    /**
+     * Un-explode. [progress] runs 0 (fully scattered, as it ended) to 1 (whole again).
+     *
+     * Positions lerp toward their captured origins rather than integrating velocity backwards, so
+     * the pieces land exactly on the ship's silhouette instead of near it. Lifetime is restored
+     * along the same curve because the renderer derives alpha from it
+     * (`VectorRenderer`: `alpha = lifetime / 2f`) — so the fade runs backwards with the motion,
+     * which is what makes this read as time reversing rather than as debris being tidied away.
+     *
+     * Call [captureScatter] once before the first call: this interpolates from that snapshot, not
+     * from the live position, so it is safe to call every frame with a rising progress.
+     */
+    fun rewind(progress: Float) {
+        val t = progress.coerceIn(0f, 1f)
+        debrisAlphaScale = 1f - shipAlphaAt(t)
+        for (d in debris) {
+            d.position.set(
+                d.scatterX + (d.origin.x - d.scatterX) * t,
+                d.scatterY + (d.origin.y - d.scatterY) * t
+            )
+            d.lifetime = d.scatterLifetime + (d.startLifetime - d.scatterLifetime) * t
         }
     }
 

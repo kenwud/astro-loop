@@ -13,13 +13,13 @@ object PassiveDefinitions {
         PassiveDef(
             id = "nano_repair",
             name = "Nano Repair",
-            description = "Regenerates health\nover time",
+            description = "Regenerates health over time",
             effectPerStack = "+0.4 HP/sec"
         ),
         PassiveDef(
             id = "duplicator_core",
             name = "Duplicator Core",
-            description = "Adds an extra\nprojectile",
+            description = "Adds an extra projectile",
             effectPerStack = "+1 projectile to all weapons"
         ),
         PassiveDef(
@@ -37,7 +37,7 @@ object PassiveDefinitions {
         PassiveDef(
             id = "extra_weapon_slot",
             name = "Weapon Expansion",
-            description = "Gain a 5th slot\nlose one passive",
+            description = "Gain a 5th weapon slot",
             effectPerStack = "+1 weapon\n-1 passive"
         ),
         PassiveDef(
@@ -55,19 +55,19 @@ object PassiveDefinitions {
         PassiveDef(
             id = "momentum_drive",
             name = "Momentum Drive",
-            description = "Damage increases\nwhile moving",
+            description = "Damage increases while moving",
             effectPerStack = "+8% damage\nwhile moving"
         ),
         PassiveDef(
             id = "cryo_field",
             name = "Cryo Field",
-            description = "Slow zone\naround ship",
+            description = "Slow zone around ship",
             effectPerStack = "+25% radius"
         ),
         PassiveDef(
             id = "lucky_star",
             name = "Lucky Star",
-            description = "More upgrades drop\nall picked randomly",
+            description = "More upgrades, chosen at random",
             effectPerStack = "Auto upgrades,\n+50% drops"
         ),
         PassiveDef(
@@ -79,13 +79,13 @@ object PassiveDefinitions {
         PassiveDef(
             id = "vampiric_core",
             name = "Vampiric Core",
-            description = "Drain life from\nnearby asteroids",
+            description = "Drain life from nearby asteroids",
             effectPerStack = "+0.1 HP/tick\nper asteroid"
         ),
         PassiveDef(
             id = "glass_cannon",
             name = "Glass Cannon",
-            description = "No shields,\nmassive damage",
+            description = "No shields, massive damage",
             effectPerStack = "+100% damage, shields disabled"
         )
     )

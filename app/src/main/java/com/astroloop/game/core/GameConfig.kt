@@ -64,7 +64,7 @@ object GameConfig {
     const val BOSS_EMP_CHARGE_THRESHOLD = 0.45f // guard: EMP only fires when charge ≥ this
     const val BOSS_CHARGED_SHOT_DAMAGE = 10000f // fat railgun kill-shot — instakills non-Astro pilots
 
-    // Boss EMP rush-in
+    // Boss EMP rush-in — BossRush turns these into the closing speed.
     const val BOSS_RUSH_TRIGGER_DISTANCE = 300f // EMP fires when the rusher closes to this gap
     const val BOSS_RUSH_SPEED_FLOOR = 700f      // rush is never slower than this (px/s)
     const val BOSS_RUSH_MAX_CLOSE_TIME = 3f     // gap/this bounds arrival time from any distance

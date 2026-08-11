@@ -15,7 +15,16 @@ class VampiricLeecherSystem(
     private var spawnTimer = 0f
     private val inRangeAsteroids = HashSet<Asteroid>()
 
+    /**
+     * Whole-stream opacity, 1 while the player is alive and ramping to 0 through [fadeOut].
+     * The per-particle alpha in `renderLeechParticles` is multiplied by this.
+     */
+    var fadeAlpha: Float = 1f
+        private set
+
     companion object {
+        /** How long the stream takes to break off once the player dies. */
+        const val DEATH_FADE_SECONDS = 0.25f
         const val TICK_INTERVAL = 0.2f
         const val LEECH_RANGE = GameConfig.SHIP_BASE_SIZE * 4f  // 100f from asteroid edge
         const val LEECH_PER_STACK = 0.1f
@@ -70,6 +79,25 @@ class VampiricLeecherSystem(
         }
 
         // Advance and expire all particles every frame (after seeding so new particles get their first step)
+        advanceParticles(deltaTime)
+    }
+
+    /**
+     * The player is dead: break the stream off.
+     *
+     * Called from the death play-out rather than `update`, which stops with `updatePlaying`.
+     * Particles keep their motion — a stream that froze mid-air would read as a dropped frame —
+     * but the whole thing dims out over [DEATH_FADE_SECONDS] instead of flying home, which would
+     * read as the wreck still feeding.
+     */
+    fun fadeOut(deltaTime: Float) {
+        if (fadeAlpha <= 0f) return
+        advanceParticles(deltaTime)
+        fadeAlpha = (fadeAlpha - deltaTime / DEATH_FADE_SECONDS).coerceAtLeast(0f)
+        if (fadeAlpha <= 0f) particles.clear()
+    }
+
+    private fun advanceParticles(deltaTime: Float) {
         val iter = particles.iterator()
         while (iter.hasNext()) {
             val p = iter.next()
@@ -110,5 +138,6 @@ class VampiricLeecherSystem(
         inRangeAsteroids.clear()
         tickTimer = 0f
         spawnTimer = 0f
+        fadeAlpha = 1f
     }
 }

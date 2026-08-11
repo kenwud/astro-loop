@@ -126,7 +126,7 @@ object SoundManager {
         "sfx_launch",
         "sfx_slot_win", "sfx_pilot_recruit",
         // Radio
-        "sfx_radio_corrupted",
+        "sfx_radio_corrupted", "sfx_radio_crackle",
         // UI
         "sfx_ui_tap", "sfx_ui_swipe", "sfx_ui_purchase",
         "sfx_ui_upgrade_select", "sfx_slot_spin", "sfx_slot_jackpot",
@@ -169,6 +169,22 @@ object SoundManager {
             else -> volumeSfxCombat
         }
     }
+
+    /**
+     * Apply an [AudioMode]. Music and combat are silenced independently; the hangar's own
+     * interface sounds only stop for [AudioMode.NONE].
+     *
+     * [isMuted] keeps its original meaning of "everything off" so the many music-volume sites that
+     * already consult it stay correct, and [combatSfxMuted] adds the narrower gate on top.
+     */
+    fun applyAudioMode(mode: AudioMode) {
+        audioMode = mode
+        setMuted(mode.musicSilenced)
+    }
+
+    /** What is currently being silenced. Every SFX gate asks this rather than [isMuted]. */
+    var audioMode: AudioMode = AudioMode.ALL
+        private set
 
     fun setMuted(muted: Boolean) {
         isMuted = muted
@@ -305,7 +321,12 @@ object SoundManager {
         appContext = ctx.applicationContext
 
         val prefs = ctx.getSharedPreferences("astrohunt_save", Context.MODE_PRIVATE)
-        isMuted = prefs.getBoolean("audio_muted", false)
+        applyAudioMode(
+            AudioMode.resolve(
+                storedName = prefs.getString("audio_mode", null),
+                legacyMuted = prefs.getBoolean("audio_muted", false)
+            )
+        )
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_GAME)
@@ -322,7 +343,8 @@ object SoundManager {
                         sfxLoaded.add(sampleId)
                         // Play any sound that was requested before it finished loading
                         pendingPlays.remove(sampleId)?.let { pending ->
-                            if (!isMuted) {
+                            // Re-asked on arrival: the mode may have changed while it loaded.
+                            if (!audioMode.effectsSilenced) {
                                 val vol = (pending.volume * pending.categoryVolume).coerceIn(0f, 1f)
                                 pool.play(sampleId, vol, vol, 1, 0, pending.rate.coerceIn(0.5f, 2.0f))
                             }
@@ -373,7 +395,9 @@ object SoundManager {
      * @param rate     Playback rate (0.5–2.0)
      */
     fun playSFX(eventId: String, volume: Float = 1.0f, rate: Float = 1.0f, isSoundboard: Boolean = false) {
-        if (isMuted) return
+        // isMuted now tracks the music, which may be silenced while the fight is not — so the SFX
+        // gate reads the two dedicated flags instead of riding on it.
+        if (audioMode.effectsSilenced) return
         val pool = soundPool ?: return
         val soundId = sfxIds[eventId] ?: return
 

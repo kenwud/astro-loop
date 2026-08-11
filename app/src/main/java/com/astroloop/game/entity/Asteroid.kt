@@ -146,6 +146,16 @@ class Asteroid : Entity() {
         }
     }
 
+    /**
+     * Multiply this asteroid's health, preserving the size and type scaling already applied by
+     * [initialize]. Call at spawn only: it lifts the ceiling and refills to it, so a scaled
+     * asteroid enters the field undamaged rather than appearing to have taken a hit.
+     */
+    fun scaleHealth(factor: Float) {
+        maxHealth *= factor
+        health = maxHealth
+    }
+
     fun shouldSplit(): Boolean {
         return size != AsteroidSize.SMALL && type != AsteroidType.VOLATILE
     }

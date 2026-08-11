@@ -231,7 +231,19 @@ class BossSystem(
         val aimDir = boss.getAimDirection()
         // One report per volley, slightly louder than a regular enemy (they fire at 0.4f)
         SoundManager.playSFX("sfx_weapon_railgun", 0.5f)
-        // L5 mirror match: double burst (L3+ behavior)
+        // Two shots of RAIL_DAMAGE, so a volley lands the same 80 the player's Railgun lands in
+        // one. That total is the only thing the two weapons share — this is not a tuned-down
+        // Railgun, it is a different weapon:
+        //   - half the speed (RAIL_SPEED 800 against the Railgun's 2000)
+        //   - no piercing set, so Projectile.onHit deactivates it on first contact, where the
+        //     player's passes through maxPierces = 10
+        //   - RECALL_SHOT, which Projectile.update exempts from lifetime expiry: instead of
+        //     leaving the field it stops at the screen edge, waits RECALL_PAUSE_TIME and flies
+        //     back, and nothing ever reads ricochetCount, so it returns until it connects.
+        // The player does get that boomerang, but on the *corruption* run rather than in Astro
+        // Loop — hasCrystalPowers is isCorrupted() — and it is bolted onto ordinary railgun
+        // projectiles rather than living in the weapon. See "Crystal power: player railgun recall
+        // shots" in GameSurfaceView, which reuses Boss.RECALL_PAUSE_TIME and this same edge test.
         val shotsInBurst = 2
         for (burst in 0 until shotsInBurst) {
             val burstOffset = burst * 15f

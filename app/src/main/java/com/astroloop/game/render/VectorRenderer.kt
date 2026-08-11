@@ -54,6 +54,29 @@ class VectorRenderer(
         shapeRenderer.setStrokeWidth(2f)
     }
 
+    /**
+     * Draw the ship at its death position, part-solid, for the crystal rewind's handover.
+     *
+     * Deliberately not [renderShip]: that returns early on an inactive ship, and the ship is very
+     * much dead here. This draws the hull alone — no shields, no afterimages, no drone — because
+     * the point is the silhouette reassembling, not the loadout coming back.
+     */
+    fun renderRestoredShip(canvas: Canvas, ship: Ship, state: GameState, alpha: Float) {
+        val displayColor = if (state.isCorruptionRun) Boss.CORRUPTION_COLOR else ship.shipColor
+        ShipRenderer.drawShip(
+            canvas = canvas,
+            shapeRenderer = shapeRenderer,
+            x = ship.position.x,
+            y = ship.position.y,
+            rotation = ship.rotation,
+            size = ship.radius,
+            shipColor = displayColor,
+            pilotColor = ship.pilotColor,
+            startingWeaponId = ship.startingWeaponId,
+            alpha = alpha.coerceIn(0f, 1f)
+        )
+    }
+
     fun renderShip(canvas: Canvas, ship: Ship, state: GameState) {
         if (!ship.isActive) return
 
@@ -1189,7 +1212,9 @@ class VectorRenderer(
 
         // Render debris
         for (debris in explosion.getDebris()) {
-            val alpha = (debris.lifetime / 2f).coerceIn(0f, 1f)
+            // debrisAlphaScale is the crystal rewind's handover: 1 while the pieces fly home, then
+            // dropping to 0 as the restored ship fades in over them.
+            val alpha = (debris.lifetime / 2f).coerceIn(0f, 1f) * explosion.debrisAlphaScale
             shapeRenderer.setColor(debris.color)
             shapeRenderer.setAlpha(alpha)
 
@@ -1876,7 +1901,8 @@ class VectorRenderer(
         val ay = shipY + kotlin.math.sin(rotation) * shipRadius
         val bx = ax + kotlin.math.cos(rotation) * 1600f
         val by = ay + kotlin.math.sin(rotation) * 1600f
-        // NOTE: %10000L keeps the float small enough for sin() precision
+        // NOTE: %10000L keeps the float small enough for sin() precision — the raw millisecond
+        // clock is around 1.7e12 and loses its fractional part entirely once cast to Float.
         val t = (System.currentTimeMillis() % 10000L) / 1000f
         val pulse = 0.85f + 0.15f * kotlin.math.sin(t * 12f)
 
@@ -1894,19 +1920,28 @@ class VectorRenderer(
     }
 
 
-    fun renderLeechParticles(canvas: Canvas, particles: List<LeechParticle>, shipX: Float, shipY: Float) {
-        if (particles.isEmpty()) return
+    /**
+     * @param alphaScale whole-stream opacity — 1 in play, ramping to 0 while the death fade runs.
+     */
+    fun renderLeechParticles(
+        canvas: Canvas,
+        particles: List<LeechParticle>,
+        shipX: Float,
+        shipY: Float,
+        alphaScale: Float = 1f
+    ) {
+        if (particles.isEmpty() || alphaScale <= 0f) return
         for (p in particles) {
             val curX = p.edgeX + (shipX - p.edgeX) * p.t
             val curY = p.edgeY + (shipY - p.edgeY) * p.t
             val prevT = (p.t - 0.1f).coerceAtLeast(0f)
             val prevX = p.edgeX + (shipX - p.edgeX) * prevT
             val prevY = p.edgeY + (shipY - p.edgeY) * prevT
-            val alpha = when {
-                p.t < 0.1f  -> (p.t / 0.1f * 200f).toInt()
-                p.t > 0.85f -> ((1f - p.t) / 0.15f * 200f).toInt()
-                else        -> 200
-            }.coerceIn(0, 255)
+            val alpha = (when {
+                p.t < 0.1f  -> p.t / 0.1f * 200f
+                p.t > 0.85f -> (1f - p.t) / 0.15f * 200f
+                else        -> 200f
+            } * alphaScale).toInt().coerceIn(0, 255)
             leechParticlePaint.alpha = alpha
             canvas.drawLine(prevX, prevY, curX, curY, leechParticlePaint)
         }

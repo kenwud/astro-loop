@@ -51,7 +51,7 @@ object DesertDefinitions {
 
     val phase1Lines = listOf(
         DesertLine(TB, "Eyes on the road, Lieutenant.", TB_COLOR, DesertTrigger.SCENE_START, 2f),
-        DesertLine(ASTRO, "You call this a road?", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
+        DesertLine(ASTRO, "You call this a road, Tobar?", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
         DesertLine(TB, "Fair point.", TB_COLOR, DesertTrigger.TIMER, 3f),
         DesertLine(TB, "Contact north. Light armor.", TB_COLOR, DesertTrigger.FIRST_ENEMIES, 1f),
         DesertLine(ASTRO, "Copy that, Tobar.", ASTRO_COLOR, DesertTrigger.TIMER, 3f),
@@ -66,14 +66,14 @@ object DesertDefinitions {
         DesertLine(TB, "I keep thinking about after.", TB_COLOR, DesertTrigger.TIMER, 4f),
         DesertLine(ASTRO, "Yeah?", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
         DesertLine(TB, "A bar. Somewhere quiet.", TB_COLOR, DesertTrigger.TIMER, 4f),
-        DesertLine(ASTRO, "You? Running a bar?", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
+        DesertLine(ASTRO, "You? Running a bar, Tobar?", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
         DesertLine(TB, "Know every name. Good drinks.", TB_COLOR, DesertTrigger.TIMER, 4f),
         DesertLine(TB, "No orders. No commands.", TB_COLOR, DesertTrigger.TIMER, 3f),
         DesertLine(ASTRO, "...Yeah. Maybe.", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
         DesertLine(TB, "More contacts. Twelve o'clock.", TB_COLOR, DesertTrigger.SECOND_WAVE, 1f),
         DesertLine(ASTRO, "Getting busy out here.", ASTRO_COLOR, DesertTrigger.AFTER_KILLS, 1f),
         DesertLine(TB, "Just like the old days.", TB_COLOR, DesertTrigger.TIMER, 4f),
-        DesertLine(ASTRO, "These ARE the old days.", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
+        DesertLine(ASTRO, "These ARE the old days, Tobar.", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
         DesertLine(TB, "Ha. Fair point, Lieutenant.", TB_COLOR, DesertTrigger.TIMER, 3f)
     )
 
@@ -115,9 +115,38 @@ object DesertDefinitions {
         DesertLine(CRYSTAL, "A price must be paid.", CRYSTAL_COLOR, DesertTrigger.TIMER, 4f),
         DesertLine(ASTRO, "No. NO!", ASTRO_COLOR, DesertTrigger.TIMER, 3f),
         DesertLine(TB, "It hurts\u2014 it hurts, Astro.", TB_COLOR, DesertTrigger.TIMER, 5f),
-        DesertLine(ASTRO, "...Tobar?", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
-        DesertLine(CRYSTAL, "You wanted this.", CRYSTAL_COLOR, DesertTrigger.TIMER, 5f)
+        // The reveal. The old name is reached for and the new one arrives in the same breath —
+        // this is where the player learns that TOBAR is TB-26, rather than inferring it later
+        // from a bartender's voice.
+        DesertLine(ASTRO, "...Tobar? TB?", ASTRO_COLOR, DesertTrigger.TIMER, 4f),
+        DesertLine(CRYSTAL, "The price is paid.", CRYSTAL_COLOR, DesertTrigger.TIMER, 5f)
     )
 
     val allLines: List<DesertLine> = phase1Lines + phase2Lines + goodEndingLines + horrorLines + crystalLines
+
+    /**
+     * Whether this pass through the desert withholds the choice.
+     *
+     * The first pass is on rails: Tobar never says "We should stop.", the branch never arms, and
+     * the village is destroyed. The choice returns on every later pass, so reaching the good
+     * ending is something the loop grants on a second run at the same moment rather than
+     * something available the first time you are there.
+     *
+     * Keyed on the story loop because the desert recurs with it: the horror path calls
+     * `incrementStoryLoop()` and sends the player back around the arc, while the good ending is
+     * terminal and enters ASTRO_LOOP. In normal play `incrementStoryLoop()` is only ever called
+     * at the end of the horror path, so loop 1 is exactly "has never finished the desert".
+     */
+    fun isForcedHorror(storyLoop: Int): Boolean = storyLoop <= 1
+
+    /**
+     * The phase-1 script, minus Tobar's stop line when the pass is forced.
+     *
+     * Removing the line removes the branch: its `STOP_CHECK` trigger is what arms the stop check,
+     * so a script without it can only end one way. Filtered by trigger rather than by index or
+     * text so re-authoring the surrounding lines cannot silently re-arm the choice.
+     */
+    fun phase2LinesFor(forcedHorror: Boolean): List<DesertLine> =
+        if (forcedHorror) phase2Lines.filter { it.trigger != DesertTrigger.STOP_CHECK }
+        else phase2Lines
 }

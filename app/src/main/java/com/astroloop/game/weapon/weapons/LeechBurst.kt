@@ -17,6 +17,16 @@ class LeechBurst : Weapon(
     name = "Leech Burst",
     description = "Scatter pellets that heal the ship on hit"
 ) {
+    companion object {
+        /**
+         * The same cone Scatter Shot throws, re-exported rather than redeclared.
+         *
+         * An evolution that scattered wider than the weapon it replaced would be a downgrade, and
+         * the two used to be kept in step by a comment alone.
+         */
+        val SPREAD_CONE_RADIANS = ScatterShot.SPREAD_CONE_RADIANS
+    }
+
     override val baseDamage = 12f
     override val baseCooldown = 0.5f
     override val baseProjectileSpeed = 550f
@@ -34,8 +44,9 @@ class LeechBurst : Weapon(
         val speed = getProjectileSpeed(state)
         val count = getProjectileCount(state)
 
-        // Wide scatter spread: 60-degree cone (matches ScatterShot pattern)
-        val spreadAngle = PI.toFloat() / 3f * state.areaMultiplier
+        // Read from ScatterShot rather than copied, so this cannot drift wider than the weapon it
+        // evolves from — an evolution that scattered worse than its base would be a downgrade.
+        val spreadAngle = SPREAD_CONE_RADIANS * state.areaMultiplier
 
         for (i in 0 until count) {
             val angle = firer.rotation + (Random.nextFloat() - 0.5f) * spreadAngle

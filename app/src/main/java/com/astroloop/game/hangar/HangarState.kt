@@ -6,6 +6,8 @@ import com.astroloop.game.data.PilotDef
 import com.astroloop.game.data.PilotDefinitions
 import com.astroloop.game.data.PilotUnlockType
 import com.astroloop.game.data.ShipDefinitions
+import com.astroloop.game.data.StoreUpgradeDefinitions
+import com.astroloop.game.core.AudioMode
 import com.astroloop.game.core.StoryStateManager
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -36,6 +38,11 @@ data class WalkerNPC(
 
 class HangarState(internal val persistence: PersistenceManager) {
 
+    companion object {
+        /** Long enough to be seen as a change, short enough not to be an animation. */
+        const val HINT_NOTE_REVEAL_SECONDS = 0.8f
+    }
+
     @Volatile var phase: HangarPhase = HangarPhase.BROWSING
 
     // --- Page navigation ---
@@ -63,6 +70,157 @@ class HangarState(internal val persistence: PersistenceManager) {
     @Volatile var pilotFlipProgress: Float = 0f
     @Volatile var pilotFlipShowBack: Boolean = false
     // No scroll needed — tappable grid on bar page
+
+    /**
+     * Seconds left on each store tile's flip, indexed by its position in
+     * `StoreUpgradeDefinitions.tiles`. Zero means the tile is showing its front.
+     *
+     * **One clock per tile, not one clock.** The first cut kept a single index, so turning over a
+     * second card snapped the first back to its front with no fade — which broke the rule that
+     * nothing on screen may simply vanish and, more to the point, made the back useless for what it
+     * exists to do: comparing two upgrades before spending. Owner, 2026-08-09: "no need for flipped
+     * pages to flip back when you select another upgrade."
+     *
+     * A plain array rather than volatile scalars, matching `pilotCardFades` above: written by the
+     * UI thread on tap, advanced and read by the game thread. A torn read costs one frame of a
+     * fade, never a purchase.
+     */
+    private val storeFlipTimers = FloatArray(StoreUpgradeDefinitions.tiles.size)
+
+    // Hold-to-buy, mirrored out of HoldToBuy each frame so the renderer can draw the fill without
+    // reaching into the view's input state.
+    @Volatile var storeHoldIndex: Int = -1
+    @Volatile var storeHoldProgress: Float = 0f
+
+    // Hold-fill exit — a completion flash or an early-release fade, so the fill drawn above never
+    // simply vanishes — nothing on screen may go without a visible exit. HoldToBuy stays pure and
+    // zeroes its own progress the instant it cancels or completes; HangarSurfaceView tracks the
+    // decay and mirrors it here the same way it mirrors storeHoldIndex/Progress above.
+    @Volatile var storeHoldExitIndex: Int = -1
+    @Volatile var storeHoldExitProgress: Float = 0f  // fill width to hold through the fade, 0..1
+    @Volatile var storeHoldExitAlpha: Float = 0f      // 1 = fully visible, decaying to 0
+    @Volatile var storeHoldExitSuccess: Boolean = false // true = completion flash, false = plain fade
+
+    /**
+     * Show [index]'s back for [duration] seconds, leaving every other turned-over card alone.
+     *
+     * Re-tapping a card that is already showing its back restarts its peek rather than ending it —
+     * there is deliberately no dismiss gesture, so a player rereading a card should not have to
+     * wait it out.
+     */
+    fun flipStoreCard(index: Int, duration: Float) {
+        if (index !in storeFlipTimers.indices) return
+        storeFlipTimers[index] = duration
+    }
+
+    /**
+     * A tap on [index]: turn it over if it is showing its front, turn it back if it is not.
+     *
+     * Owner, 2026-08-09. A second tap always means "put it back" — including one that lands during
+     * the opening fade, where the front is technically still the visible face. Guessing at intent
+     * from how far through the animation the player happened to tap would be worse than a rule they
+     * can hold in their head.
+     */
+    fun toggleStoreCard(index: Int, duration: Float) {
+        if (index !in storeFlipTimers.indices) return
+        if (isStoreCardFlipped(index)) closeStoreCard(index) else flipStoreCard(index, duration)
+    }
+
+    /**
+     * Dismiss [index] through its closing fade.
+     *
+     * Pulled down to one fade leg rather than zeroed: zeroing would make the back vanish between
+     * frames, and this peek cross-fades in precisely because nothing may. A card already
+     * inside its last leg is left alone rather than restarted.
+     */
+    fun closeStoreCard(index: Int) {
+        if (index !in storeFlipTimers.indices) return
+        storeFlipTimers[index] =
+            storeFlipTimers[index].coerceAtMost(HangarSurfaceView.STORE_FLIP_FADE)
+    }
+
+    /**
+     * A tap on pilot [index]'s card: turn it over, turn it back, or move the peek to a new card.
+     *
+     * The bar grid shows one back at a time — unlike the store, where comparing two upgrades is the
+     * point — so tapping a different pilot moves the peek rather than adding to it.
+     */
+    fun togglePilotFlip(index: Int) {
+        if (pilotFlipIndex == index && pilotFlipTimer > 0f) {
+            pilotFlipTimer = pilotFlipTimer.coerceAtMost(HangarSurfaceView.PILOT_FLIP_FADE)
+            return
+        }
+        pilotFlipIndex = index
+        pilotFlipTimer = HangarSurfaceView.PILOT_FLIP_DURATION
+        pilotFlipProgress = 1f    // start fully visible; 0f caused a one-frame invisible flash
+        pilotFlipShowBack = false
+    }
+
+    /**
+     * Seconds left of the cross-fade that turns a locked pilot's `?` into the bar's note on them.
+     *
+     * Armed the moment the hint is spoken, which is the moment the player is watching the bar — so
+     * without it the `?` would simply cease to exist mid-conversation. Nothing on screen may go
+     * without a visible exit, and that covers UI elements as much as ships and rocks.
+     *
+     * **Not persisted, deliberately.** On a later launch the note is already known and should just
+     * be there; replaying the reveal every time the bar opens would make a one-off moment into a
+     * recurring animation.
+     */
+    @Volatile var hintNoteReveal: Float = 0f
+
+    /** Start the `?`-to-note cross-fade. */
+    fun beginHintNoteReveal() {
+        hintNoteReveal = HINT_NOTE_REVEAL_SECONDS
+    }
+
+    /** Tick the reveal. Safe to call every frame whether or not one is running. */
+    fun advanceHintNoteReveal(deltaTime: Float) {
+        if (hintNoteReveal > 0f) hintNoteReveal = (hintNoteReveal - deltaTime).coerceAtLeast(0f)
+    }
+
+    /** How visible the note is: 0 at the start of the reveal, 1 once it is done or never ran. */
+    fun hintNoteAlpha(): Float =
+        if (hintNoteReveal <= 0f) 1f
+        else (1f - hintNoteReveal / HINT_NOTE_REVEAL_SECONDS).coerceIn(0f, 1f)
+
+    /** Tick every turned-over card's clock. Called once per frame from the game thread. */
+    fun advanceStoreFlips(deltaTime: Float) {
+        for (i in storeFlipTimers.indices) {
+            if (storeFlipTimers[i] > 0f) {
+                storeFlipTimers[i] = (storeFlipTimers[i] - deltaTime).coerceAtLeast(0f)
+            }
+        }
+    }
+
+    /** Whether [index] is mid-peek — either face may be on screen, see [storeFlipShowBack]. */
+    fun isStoreCardFlipped(index: Int): Boolean =
+        index in storeFlipTimers.indices && storeFlipTimers[index] > 0f
+
+    /**
+     * Whether [index] has finished turning and is showing its back.
+     *
+     * The cycle is the pilot card's: fade the front out over one leg, hold the back, fade it out
+     * again. So this is false for the first leg even though the peek has started.
+     */
+    fun storeFlipShowBack(index: Int): Boolean {
+        if (!isStoreCardFlipped(index)) return false
+        val elapsed = HangarSurfaceView.STORE_FLIP_DURATION - storeFlipTimers[index]
+        return elapsed >= HangarSurfaceView.STORE_FLIP_FADE
+    }
+
+    /** Alpha of whatever face [index] is currently showing: 1 fully visible, 0 invisible. */
+    fun storeFlipProgress(index: Int): Float {
+        if (!isStoreCardFlipped(index)) return 0f
+        val remaining = storeFlipTimers[index]
+        val elapsed = HangarSurfaceView.STORE_FLIP_DURATION - remaining
+        val fade = HangarSurfaceView.STORE_FLIP_FADE
+        return when {
+            elapsed < fade -> 1f - elapsed / fade   // front fading out
+            remaining < fade -> remaining / fade    // back fading out
+            else -> 1f                              // back fully visible
+        }
+    }
 
     // --- Pilot walker (world-space pixel coordinates spanning 3 pages) ---
     @Volatile var pilotX: Float = 0f              // World X position in pixels
@@ -124,6 +282,10 @@ class HangarState(internal val persistence: PersistenceManager) {
     var reelStopTimes: LongArray = LongArray(3)     // Stagger timestamps
     @Volatile var spinResultYen: Int = 0            // Payout amount for display
     @Volatile var spinResultUpgrade: String? = null  // Upgrade name if jackpot
+    // The upgrade a jackpot has promised but not yet handed over. Chosen when the roll happens so
+    // the reels and the save can never disagree about which one it was; written when they stop, so
+    // the tile does not gain a level before the third reel has landed on it.
+    @Volatile var pendingSpinUpgradeId: String? = null
     @Volatile var spinResultSymbol: Int = -1         // Symbol that landed (SYM_* constant)
     @Volatile var spinResultTime: Long = 0          // When result landed (for fade-out)
     @Volatile var reelPhases: FloatArray = FloatArray(3) // Animation scroll offset per reel
@@ -171,10 +333,29 @@ class HangarState(internal val persistence: PersistenceManager) {
     @Volatile var showCodex: Boolean = false
     var hatchRect: RectF? = null
     var paperRect: RectF? = null
-    var audioMuted: Boolean = false
+    var audioMode: AudioMode = AudioMode.ALL
     var vibrationMuted: Boolean = false
     var audioMuteButtonRect: RectF? = null
     var vibrationMuteButtonRect: RectF? = null
+
+    // --- Slot readout messages (audio / vibration button feedback) ---
+    // The buttons flank the machine's CRT readout, so the readout is what tells the player which
+    // state a press just arrived at. A message takes the screen outright: see showReadoutMessage.
+    @Volatile var readoutMessage: String? = null
+    @Volatile var readoutMessageTime: Long = 0L
+
+    /**
+     * Put [text] on the slot machine's readout for the next three seconds.
+     *
+     * Clears any spin result at the same time. The message is drawn ahead of a result anyway, so
+     * without this a jackpot interrupted early would reappear for its remainder once the message
+     * faded, which reads as a glitch. The payout is already banked by the time either is drawn.
+     */
+    fun showReadoutMessage(text: String) {
+        readoutMessage = text
+        readoutMessageTime = System.currentTimeMillis()
+        spinResultTime = 0L
+    }
 
     // --- Fade from black (corruption death return) ---
     @Volatile var fadeFromBlackTimer: Float = 0f
@@ -403,7 +584,7 @@ class HangarState(internal val persistence: PersistenceManager) {
         codexHintGiven = persistence.isCodexHintGiven()
 
         // Load mute state
-        audioMuted = persistence.isAudioMuted()
+        audioMode = persistence.getAudioMode()
         vibrationMuted = persistence.isVibrationMuted()
 
         // Load Astro hint state

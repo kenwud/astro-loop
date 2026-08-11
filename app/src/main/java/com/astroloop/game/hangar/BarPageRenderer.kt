@@ -5,13 +5,16 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import com.astroloop.game.core.LayoutRect
+import com.astroloop.game.core.StoryStateManager
 import com.astroloop.game.data.BandanaDefinitions
 import com.astroloop.game.data.PassiveDefinitions
 import com.astroloop.game.data.PersistenceManager
 import com.astroloop.game.data.PilotDefinitions
+import com.astroloop.game.data.PilotHintCards
 import com.astroloop.game.entity.Boss
 import com.astroloop.game.render.FontManager
 import com.astroloop.game.render.IconCache
+import com.astroloop.game.render.TextWrap
 import java.util.concurrent.CopyOnWriteArrayList
 
 class BarPageRenderer(
@@ -163,9 +166,12 @@ class BarPageRenderer(
                         cardBorderPaint.strokeWidth = 1.5f
                     }
                     isNextToRecruit -> {
+                        // Same border as an unlocked crewmate — colour, alpha and weight. What
+                        // marks this card as locked is the silhouette and the note inside it, not
+                        // a dimmer frame around it.
                         cardBorderPaint.color = borderColor
-                        cardBorderPaint.alpha = (180 * cardFade).toInt()
-                        cardBorderPaint.strokeWidth = 1f
+                        cardBorderPaint.alpha = cardAlpha
+                        cardBorderPaint.strokeWidth = 1.5f
                     }
                     else -> {
                         cardBorderPaint.color = 0xFF333344.toInt()
@@ -197,7 +203,13 @@ class BarPageRenderer(
                 if (portraitBitmap != null) {
                     val baseAlpha = when {
                         isUnlocked      -> cardAlpha
-                        isNextToRecruit -> (80 * cardFade).toInt()
+                        // Carried on the silhouette itself rather than on the card's fade, so the
+                        // card can dim exactly like any other unselected one. 180 at a 0.35 fade
+                        // lands near 25% — the visibility that worked on device — where the
+                        // original 80 gave 11% and read as absent. Still under an unlocked
+                        // portrait's 35%, which is right: it is a shape, not a face. The
+                        // further-off pilots stay at 40 so the tiering says which one is next.
+                        isNextToRecruit -> (180 * cardFade).toInt()
                         else            -> (40 * cardFade).toInt()
                     }
                     bitmapPaint.alpha = when {
@@ -215,10 +227,14 @@ class BarPageRenderer(
 
                 if (isUnlocked) {
                     if (showBack) {
+                        // Every alpha in this branch is scaled by cardAlpha, exactly as the front
+                        // face is. It used to draw at a flat 255 * flipProgress, so a turned-over
+                        // card ignored the grid's dimming: flip one, select somebody else, and it
+                        // stayed at full brightness while every card around it faded.
                         if (corrupted && pilot.id == "pilot_astro") {
                             // TB-26 is dead — show muted memorial back
                             cardBgPaint.color = 0xFF252538.toInt()
-                            cardBgPaint.alpha = (255 * flipProgress).toInt()
+                            cardBgPaint.alpha = (cardAlpha * flipProgress).toInt()
                             canvas.drawRoundRect(rect, 4f, 4f, cardBgPaint)
                             cardBgPaint.color = 0xFF1A1A2E.toInt()
 
@@ -228,14 +244,14 @@ class BarPageRenderer(
                                 val iconLeft = rect.centerX() - iconSize / 2
                                 val iconTop = rect.top + (portraitHeight - iconSize) / 2
                                 val iconRect = RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize)
-                                bitmapPaint.alpha = (128 * flipProgress).toInt()  // 50% alpha
+                                bitmapPaint.alpha = (cardAlpha * 0.5f * flipProgress).toInt()  // 50% alpha
                                 canvas.drawBitmap(tb26Icon, null, iconRect, bitmapPaint)
                                 bitmapPaint.alpha = 255
                             }
 
                             textPaint.textSize = (cardHeight * 0.13f).coerceIn(12f, 22f)
                             textPaint.color = 0xFF666677.toInt()
-                            textPaint.alpha = (255 * flipProgress).toInt()
+                            textPaint.alpha = (cardAlpha * flipProgress).toInt()
                             canvas.drawText("TB-26", rect.centerX(), stripTop + stripH * 0.38f, textPaint)
 
                             textPaint.textSize = (cardHeight * 0.12f).coerceIn(13f, 22f)
@@ -245,7 +261,7 @@ class BarPageRenderer(
                         } else {
                             // Back face — cross-dissolves with portrait at animation end
                             cardBgPaint.color = 0xFF252538.toInt()
-                            cardBgPaint.alpha = (255 * flipProgress).toInt()
+                            cardBgPaint.alpha = (cardAlpha * flipProgress).toInt()
                             canvas.drawRoundRect(rect, 4f, 4f, cardBgPaint)
                             cardBgPaint.color = 0xFF1A1A2E.toInt()
 
@@ -259,7 +275,7 @@ class BarPageRenderer(
                                 val iconLeft = rect.centerX() - iconSize / 2
                                 val iconTop = rect.top + (portraitHeight - iconSize) / 2
                                 val iconRect = RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize)
-                                bitmapPaint.alpha = (255 * flipProgress).toInt()
+                                bitmapPaint.alpha = (cardAlpha * flipProgress).toInt()
                                 canvas.drawBitmap(passiveIcon, null, iconRect, bitmapPaint)
                                 bitmapPaint.alpha = 255
                             }
@@ -267,38 +283,37 @@ class BarPageRenderer(
                             // Passive name (white) — same size as callsign, no wrapping
                             textPaint.textSize = (cardHeight * 0.13f).coerceIn(12f, 22f)
                             textPaint.color = 0xFFFFFFFF.toInt()
-                            textPaint.alpha = (255 * flipProgress).toInt()
+                            textPaint.alpha = (cardAlpha * flipProgress).toInt()
                             canvas.drawText(
                                 PassiveDefinitions.getDisplayName(pilot.startingPassiveId, pilot.id, astroLoop),
                                 rect.centerX(), stripTop + stripH * 0.38f, textPaint
                             )
 
-                            // Effect text (amber) — \n = explicit split; otherwise two-line wrap if needed
+                            // Effect text (amber). TextWrap honours an explicit \n and balances a
+                            // two-line break, so this card no longer carries its own splitter —
+                            // the old one initialised splitIndex to 1 and only tested prefixes
+                            // *short of* the full string, so copy that overflowed on its last word
+                            // alone fell through the loop and put one word on line one. "Gain a
+                            // 5th weapon slot" is a passive description and did exactly that.
                             val effectText = passiveDef?.description ?: ""
                             textPaint.textSize = (cardHeight * 0.12f).coerceIn(13f, 22f)
                             textPaint.color = 0xFFFFBB44.toInt()
-                            textPaint.alpha = (255 * flipProgress).toInt()
-                            val availableWidthEff = rect.width() - 12f
+                            textPaint.alpha = (cardAlpha * flipProgress).toInt()
                             val lineH = textPaint.textSize * 1.2f
-                            if ('\n' in effectText) {
-                                val parts = effectText.split('\n')
-                                canvas.drawText(parts[0], rect.centerX(), stripTop + stripH * 0.72f, textPaint)
-                                canvas.drawText(parts.getOrElse(1) { "" }, rect.centerX(), stripTop + stripH * 0.72f + lineH, textPaint)
-                            } else if (textPaint.measureText(effectText) <= availableWidthEff) {
-                                canvas.drawText(effectText, rect.centerX(), stripTop + stripH * 0.78f, textPaint)
-                            } else {
-                                val words = effectText.split(" ")
-                                var splitIndex = 1
-                                for (i in 2 until words.size) {
-                                    if (textPaint.measureText(words.take(i).joinToString(" ")) > availableWidthEff) {
-                                        splitIndex = i - 1
-                                        break
-                                    }
-                                }
-                                val line1 = words.take(splitIndex).joinToString(" ")
-                                val line2 = words.drop(splitIndex).joinToString(" ")
-                                canvas.drawText(line1, rect.centerX(), stripTop + stripH * 0.72f, textPaint)
-                                canvas.drawText(line2, rect.centerX(), stripTop + stripH * 0.72f + lineH, textPaint)
+                            // Clamped to two, which is all the strip has room for. The old code
+                            // drew exactly parts[0] and parts[1] and so could never exceed it;
+                            // wrapping re-breaks each \n segment, so a segment too wide for the
+                            // cell would have turned a two-line description into three and pushed
+                            // it out of the strip.
+                            val effectLines = TextWrap.clamp(
+                                TextWrap.wrap(effectText, rect.width() - 12f, textPaint::measureText), 2
+                            )
+                            // One line sits lower, centred in the strip on its own; two or more
+                            // start higher so the block stays centred. Unchanged behaviour.
+                            var effY = stripTop + stripH * (if (effectLines.size == 1) 0.78f else 0.72f)
+                            for (line in effectLines) {
+                                canvas.drawText(line, rect.centerX(), effY, textPaint)
+                                effY += lineH
                             }
                             textPaint.alpha = 255
                         }
@@ -327,13 +342,62 @@ class BarPageRenderer(
                         textPaint.alpha = 255
                     }
                 } else if (isNextToRecruit) {
-                    // Same sizing rule as the store's mystery "?" — 0.25 of the cell, clamped to
-                    // 16..28 — so the two mystery glyphs read as the same element. Both land on
-                    // the 28 cap at normal card/tile sizes.
-                    textPaint.textSize = (cardHeight * 0.25f).coerceIn(16f, 28f)
-                    textPaint.color = 0xFF888888.toInt()
-                    textPaint.alpha = cardAlpha
-                    canvas.drawText("?", rect.centerX(), stripTop + stripH * 0.55f, textPaint)
+                    // Once somebody has hinted about this pilot, the card stops being a mystery and
+                    // becomes the bar's note on them — a hint is spoken once, several runs before
+                    // the player can act on it, and this is where it stays. Null until then, and
+                    // null again from story loop 2, where the stated condition no longer governs.
+                    val note = PilotHintCards.cardFor(
+                        pilotIndex = index,
+                        hintedPilotIndex = persistence.getHintedPilotIndex(),
+                        astroHinted = persistence.getAstroHintCount() >= 1,
+                        hasLoopedBefore = StoryStateManager.hasLoopedBefore(persistence)
+                    )
+                    // Cross-fade rather than swap: the note arrives in the same beat the hint is
+                    // spoken, so both faces are drawn while the reveal runs — the "?" is seen to
+                    // go, which is what the "No instant disappearance" rule asks for. A note the
+                    // player already knew about has reveal 0 and draws outright.
+                    val noteAlpha = if (note == null) 0f else state.hintNoteAlpha()
+                    if (note == null || noteAlpha < 1f) {
+                        // Same sizing rule as the store's mystery "?" — 0.25 of the cell, clamped to
+                        // 16..28 — so the two mystery glyphs read as the same element. Both land on
+                        // the 28 cap at normal card/tile sizes.
+                        textPaint.textSize = (cardHeight * 0.25f).coerceIn(16f, 28f)
+                        textPaint.color = 0xFF888888.toInt()
+                        textPaint.alpha = (cardAlpha * (1f - noteAlpha)).toInt()
+                        canvas.drawText("?", rect.centerX(), stripTop + stripH * 0.55f, textPaint)
+                    }
+                    if (note != null) {
+                        // Set exactly like the passive name on an unlocked card — same size, same
+                        // colour — so a locked card reads as the same kind of label rather than as
+                        // fine print. Italic and quoted on top of that, because it is something
+                        // written about the pilot rather than the game talking; FontManager carries
+                        // no italic face, so the body face is skewed.
+                        textPaint.textSize = (cardHeight * 0.13f).coerceIn(12f, 22f)
+                        textPaint.color = 0xFFAABBCC.toInt()
+                        // Exempt from the card fade, unlike every other label on this grid. Cards
+                        // dim to 0.35 when they are not the selected one, and a locked card can
+                        // never BE the selected one — so the note was permanently at 2.21:1, worse
+                        // than the 2.29:1 this renderer already treated as a defect for the store's
+                        // "?". At full alpha it is 8.68:1. The reveal still fades it in.
+                        textPaint.alpha = (255 * noteAlpha).toInt()
+                        // No skew: FontManager has no italic face, so the italic was a synthetic
+                        // oblique of the upright font, which smears the stems and drops the hinting
+                        // at the 12px this lands on. The quotation marks already say it is written.
+
+                        // The note is allowed out of the bottom strip. A locked card has no callsign
+                        // and no passive under it, and its portrait is a near-transparent
+                        // silhouette, so the whole card is free — confining a two-line note to the
+                        // strip's 35% is what forced it down to unreadable sizes before.
+                        val lines = wrapNote(note, rect.width() * 0.9f, textPaint)
+                        val lineHeight = textPaint.textSize * 1.2f
+                        // Centre the block on the line the "?" used, so a card that gains a note
+                        // does not jump.
+                        var noteY = stripTop + stripH * 0.55f - (lines.size - 1) * lineHeight / 2f
+                        for (line in lines) {
+                            canvas.drawText(line, rect.centerX(), noteY, textPaint)
+                            noteY += lineHeight
+                        }
+                    }
                     textPaint.alpha = 255
                 }
                 // Unknown: no text
@@ -841,4 +905,15 @@ class BarPageRenderer(
         signLinePaint.alpha = (90 * dim).toInt()
         canvas.drawLine(x - w / 2f, y + size * 0.45f, x + w / 2f, y + size * 0.45f, signLinePaint)
     }
+
+    /**
+     * Word wrap for a locked pilot's note — the card is a twelfth of the grid.
+     *
+     * Balanced on two lines like every other card in the game. `"Is looking for yen."` and
+     * `"Wants every pilot and ship."` are short enough that greedy usually agreed, but the notes
+     * sit in the narrowest cell here, so the one that does not agree is only a rewrite away.
+     */
+    private fun wrapNote(text: String, maxWidth: Float, paint: Paint): List<String> =
+        TextWrap.wrap(text, maxWidth, paint::measureText)
+
 }

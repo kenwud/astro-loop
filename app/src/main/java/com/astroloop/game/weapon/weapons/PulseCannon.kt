@@ -9,6 +9,7 @@ import com.astroloop.game.entity.ProjectileType
 import com.astroloop.game.entity.Firer
 import com.astroloop.game.util.Vector2
 import com.astroloop.game.data.ShipDefinitions
+import com.astroloop.game.weapon.SpreadFan
 import com.astroloop.game.weapon.Weapon
 import kotlin.math.PI
 
@@ -23,6 +24,14 @@ class PulseCannon : Weapon(
     override val baseProjectileCount = 1
 
     override fun getDamage(state: GameState): Float = baseDamage * state.damageMultiplier
+
+    /**
+     * Which side an even count's leftover bolt takes, flipped every volley.
+     *
+     * An even fan cannot be both centred and symmetric, so the odd one out leans. Alternating it
+     * at two shots a second reads as the fan breathing rather than as a permanent bias.
+     */
+    private var mirrorLeftover = false
 
     override fun getProjectileCount(state: GameState): Int = level + state.extraProjectiles
 
@@ -52,14 +61,17 @@ class PulseCannon : Weapon(
             firer.rotation
         }
 
-        val spreadAngle = if (count > 1) PI.toFloat() / 12f else 0f // 15 degree spread
+        val spreadAngle = PI.toFloat() / 12f // 15 degree spread
 
-        for (i in 0 until count) {
-            val angle = if (count == 1) {
-                baseAngle
-            } else {
-                baseAngle + spreadAngle * (i - (count - 1) / 2f)
-            }
+        // Centre-anchored: one bolt always travels down the aim line, whatever the count. The old
+        // symmetric formula straddled the target on even counts — and since count is
+        // `level + extraProjectiles`, a passive pickup could flip the weapon into straddling with
+        // no warning. See SpreadFan.
+        val fan = SpreadFan.offsets(count, spreadAngle, mirrorLeftover)
+        mirrorLeftover = !mirrorLeftover
+
+        for (offset in fan) {
+            val angle = baseAngle + offset
 
             val direction = Vector2.fromAngle(angle)
             val projectile = projectilePool.obtain()

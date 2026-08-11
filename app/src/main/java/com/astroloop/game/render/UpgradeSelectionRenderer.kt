@@ -280,7 +280,7 @@ class UpgradeSelectionRenderer {
                 PassiveDefinitions.getPassiveDef(displayId)?.description ?: ""
             }
             val lines = wrapText(description, rect.width() - 24f, smallTextPaint)
-            for (line in lines.take(3)) {
+            for (line in TextWrap.clamp(lines, 3)) {
                 fitTextSize(line, rect.width() - 24f, smallTextPaint, 22f)
                 canvas.drawText(line, centerX, y, smallTextPaint)
                 y += 34f
@@ -468,13 +468,18 @@ class UpgradeSelectionRenderer {
         // Evolved weapon description
         val description = evolvedWeaponDef?.description ?: ""
         smallTextPaint.textAlign = Paint.Align.CENTER
+        // Reset the size before measuring. fitTextSize below mutates it — down to 14f — and the
+        // paint is shared, so wrapping against whatever the last card left behind made the line
+        // breaks depend on what had been drawn previously.
+        smallTextPaint.textSize = 22f
         val lines = wrapText(description, rect.width() - 30f, smallTextPaint)
-        for (line in lines.take(2)) {
+        for (line in TextWrap.clamp(lines, 2)) {
             fitTextSize(line, rect.width() - 30f, smallTextPaint, 22f)
             canvas.drawText(line, centerX, y, smallTextPaint)
             y += 26f
         }
     }
+
 
     private fun fitTextSize(text: String, maxWidth: Float, paint: Paint, maxSize: Float, minSize: Float = 14f): Float {
         paint.textSize = maxSize
@@ -487,24 +492,8 @@ class UpgradeSelectionRenderer {
         return size
     }
 
-    private fun wrapText(text: String, maxWidth: Float, paint: Paint): List<String> {
-        val lines = mutableListOf<String>()
-        for (segment in text.split('\n')) {
-            val words = segment.split(" ")
-            var currentLine = ""
-            for (word in words) {
-                val testLine = if (currentLine.isEmpty()) word else "$currentLine $word"
-                if (paint.measureText(testLine) <= maxWidth) {
-                    currentLine = testLine
-                } else {
-                    if (currentLine.isNotEmpty()) lines.add(currentLine)
-                    currentLine = word
-                }
-            }
-            if (currentLine.isNotEmpty()) lines.add(currentLine)
-        }
-        return lines
-    }
+    private fun wrapText(text: String, maxWidth: Float, paint: Paint): List<String> =
+        TextWrap.wrap(text, maxWidth, paint::measureText)
 
     private fun splitEffectText(text: String): List<String> {
         // Split effect text by newline, comma, "and", or ampersand for separate lines

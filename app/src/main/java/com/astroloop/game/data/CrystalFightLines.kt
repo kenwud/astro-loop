@@ -3,7 +3,7 @@ package com.astroloop.game.data
 import com.astroloop.game.system.CrystalPhase
 
 object CrystalFightLines {
-    // All radio lines <=35 chars (HUD radio budget).
+    // All radio lines <=35 chars — the HUD radio budget for Exo 2 at 24px.
 
     // Opening monologue (ASTRO): pairs shown at ~3s/10s/17s, part 2 follows +3.5s.
     val opening = listOf(
@@ -27,7 +27,7 @@ object CrystalFightLines {
         CrystalPhase.P2 -> "Pick me up. One more loop." to "Nothing has to end."  // invitation
         CrystalPhase.P3 -> "They're all still in here." to "Every one you lost."  // the offer
         CrystalPhase.P4 -> "We could still begin." to "You and me. Again."        // the bargain
-        CrystalPhase.P5 -> "STAY — STAY —" to null                                // desperation
+        CrystalPhase.P5 -> "STAY - STAY..." to null                                // desperation
     }
 
     /** Astro's "Go." — the line whose firing releases the ghosts. */
@@ -57,7 +57,7 @@ object CrystalFightLines {
         Triple("CRYSTAL",  "I held every one of them.",       10f),
         Triple("BRUTUS",   "Held. Never had.",                12.5f),
         Triple("WHISKERS", "Let go, boss. We're ready.",      15f),
-        Triple("CRYSTAL",  "STAY — begin — STAY —",           17.5f),
+        Triple("CRYSTAL",  "STAY - begin - STAY...",           17.5f),
         Triple("ASTRO",    GHOST_RELEASE_LINE,                20f)
     )
 

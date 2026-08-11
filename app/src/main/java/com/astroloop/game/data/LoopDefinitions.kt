@@ -25,18 +25,18 @@ object LoopDefinitions {
 
     // Per-pilot reaction to EMP #1 (the freeze) — fires for whoever you're flying.
     val empReactionLines: Map<String, String> = mapOf(
-        "pilot_astro"    to "EMP— I can't move—",
-        "pilot_medic"    to "Everything just died—",
-        "pilot_rascal"   to "No no no— not now—",
+        "pilot_astro"    to "EMP... I can't move...",
+        "pilot_medic"    to "Everything just died...",
+        "pilot_rascal"   to "No no no... not now...",
         "pilot_brutus"   to "Dead stick. Sitting duck.",
         "pilot_frost"    to "Power's gone. All of it.",
-        "pilot_dash"     to "Can't move— can't move—",
-        "pilot_ember"    to "It fried me— I'm adrift—",
+        "pilot_dash"     to "Can't move... can't move...",
+        "pilot_ember"    to "It fried me... I'm adrift...",
         "pilot_fang"     to "So this is how it ends.",
         "pilot_kraken"   to "Adrift. The current has me.",
-        "pilot_whiskers" to "Come on— restart— restart—",
+        "pilot_whiskers" to "Come on... restart... restart...",
         "pilot_unit7"    to "Total systems failure.",
-        "pilot_havoc"    to "MOVE— you piece of— MOVE—"
+        "pilot_havoc"    to "MOVE... you piece of... MOVE..."
     )
 
     val tbAbsenceLines: List<String> = listOf(
@@ -160,7 +160,7 @@ object LoopDefinitions {
     // Replaces the framing when the 12th lands — the hook into the convergence.
     val tobarTwelfthBandanaBeat = listOf(
         "That's the last one. All twelve of you, marked.",
-        "Commander... whatever's out there — it's here now."
+        "Commander... whatever's out there - it's here now."
     )
 
     val bandanaAwardReplies: Map<String, String> = mapOf(

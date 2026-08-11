@@ -1,13 +1,24 @@
 package com.astroloop.game.data
 
+/**
+ * A weapon's *presentation* and its place in the evolution tree. Deliberately holds **no combat
+ * numbers**.
+ *
+ * It used to carry `baseDamage`, `baseCooldown`, `baseProjectileSpeed` and `baseProjectileCount`
+ * alongside the real ones on the `Weapon` subclasses, and by 2026-08-11 the two had drifted apart
+ * in **24 places** — Flak Cannon 33 here against 44 in the class, Phoenix Flare 1 projectile
+ * against 8, Oblivion Beam a 1.0s cooldown against 0.1s. Nothing read the copies, which is exactly
+ * why nobody noticed: a duplicate no code depends on has nothing holding it honest.
+ *
+ * They are gone rather than corrected. Syncing two tables leaves two tables, and they would drift
+ * again the first time a weapon was tuned. **`WeaponFactory.create(id)` is the one place a
+ * weapon's numbers live.** If a screen ever needs to show them, it should ask a real weapon
+ * instance rather than a second copy of the truth.
+ */
 data class WeaponDef(
     val id: String,
     val name: String,
     val description: String,
-    val baseDamage: Float,
-    val baseCooldown: Float,
-    val baseProjectileSpeed: Float,
-    val baseProjectileCount: Int,
     val evolutionPassive: String? = null,
     val evolutionWeaponId: String? = null,
     val levelBonuses: List<String> = listOf(
@@ -30,10 +41,6 @@ object WeaponDefinitions {
             id = "pulse_cannon",
             name = "Pulse Cannon",
             description = "Auto-targeting energy bolts",
-            baseDamage = 11f,
-            baseCooldown = 0.375f,
-            baseProjectileSpeed = 600f,
-            baseProjectileCount = 1,
             evolutionPassive = "duplicator_core",
             evolutionWeaponId = "storm_cannon",
             levelBonuses = listOf(
@@ -48,10 +55,6 @@ object WeaponDefinitions {
             id = "energy_saw",
             name = "Energy Saw",
             description = "Spinning disc that shreds on contact",
-            baseDamage = 8f,
-            baseCooldown = 0.125f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 1,
             evolutionPassive = "momentum_drive",
             evolutionWeaponId = "warp_saw",
             levelBonuses = listOf(
@@ -65,11 +68,7 @@ object WeaponDefinitions {
         WeaponDef(
             id = "scatter_shot",
             name = "Scatter Shot",
-            description = "Wide pellet spread",
-            baseDamage = 8f,
-            baseCooldown = 0.75f,
-            baseProjectileSpeed = 500f,
-            baseProjectileCount = 5,
+            description = "Close spread of pellets",
             evolutionPassive = "vampiric_core",
             evolutionWeaponId = "leech_burst",
             levelBonuses = listOf(
@@ -84,10 +83,6 @@ object WeaponDefinitions {
             id = "homing_missiles",
             name = "Homing Missiles",
             description = "Lock-on missiles",
-            baseDamage = 25f,
-            baseCooldown = 1.0f,
-            baseProjectileSpeed = 350f,
-            baseProjectileCount = 1,
             evolutionPassive = "tb26",
             evolutionWeaponId = "autonomous_ace",
             levelBonuses = listOf(
@@ -102,10 +97,6 @@ object WeaponDefinitions {
             id = "ion_orbiters",
             name = "Ion Orbiters",
             description = "Orbiting energy spheres",
-            baseDamage = 15f,
-            baseCooldown = 3f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 2,
             evolutionPassive = "cryo_field",
             evolutionWeaponId = "frost_ring",
             levelBonuses = listOf(
@@ -120,10 +111,6 @@ object WeaponDefinitions {
             id = "railgun",
             name = "Railgun",
             description = "Piercing sniper shot",
-            baseDamage = 80f,
-            baseCooldown = 1.5f,
-            baseProjectileSpeed = 2000f,
-            baseProjectileCount = 1,
             evolutionPassive = "glass_cannon",
             evolutionWeaponId = "oblivion_beam",
             levelBonuses = listOf(
@@ -138,10 +125,6 @@ object WeaponDefinitions {
             id = "space_mines",
             name = "Space Mines",
             description = "Dropped proximity mines",
-            baseDamage = 60f,
-            baseCooldown = 2f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 1,
             evolutionPassive = "lucky_star",
             evolutionWeaponId = "jackpot_mines",
             levelBonuses = listOf(
@@ -156,10 +139,6 @@ object WeaponDefinitions {
             id = "solar_storm",
             name = "Solar Storm",
             description = "Random lightning strikes",
-            baseDamage = 29f,
-            baseCooldown = 1.0f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 1,
             evolutionPassive = "phoenix_core",
             evolutionWeaponId = "phoenix_flare",
             levelBonuses = listOf(
@@ -173,11 +152,7 @@ object WeaponDefinitions {
         WeaponDef(
             id = "nova_blast",
             name = "Nova Blast",
-            description = "Periodic AoE ring burst",
-            baseDamage = 40f,
-            baseCooldown = 4f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 1,
+            description = "Ring burst around your ship",
             evolutionPassive = "revenge_protocol",
             evolutionWeaponId = "lingering_nova",
             levelBonuses = listOf(
@@ -192,10 +167,6 @@ object WeaponDefinitions {
             id = "needle_gun",
             name = "Needle Gun",
             description = "Rapid piercing needles",
-            baseDamage = 5f,
-            baseCooldown = 0.25f,
-            baseProjectileSpeed = 800f,
-            baseProjectileCount = 3,
             evolutionPassive = "nano_repair",
             evolutionWeaponId = "siphon_needles",
             levelBonuses = listOf(
@@ -210,10 +181,6 @@ object WeaponDefinitions {
             id = "cluster_bomb",
             name = "Cluster Bomb",
             description = "Bomb that scatters bomblets",
-            baseDamage = 60f,
-            baseCooldown = 2f,
-            baseProjectileSpeed = 200f,
-            baseProjectileCount = 1,
             evolutionPassive = "magnet_field",
             evolutionWeaponId = "hunter_killer",
             levelBonuses = listOf(
@@ -228,10 +195,6 @@ object WeaponDefinitions {
             id = "flak_cannon",
             name = "Flak Cannon",
             description = "Direct-fire exploding shells",
-            baseDamage = 33f,
-            baseCooldown = 0.75f,
-            baseProjectileSpeed = 400f,
-            baseProjectileCount = 1,
             evolutionPassive = "extra_weapon_slot",
             evolutionWeaponId = "flak_barrage",
             levelBonuses = listOf(
@@ -249,110 +212,62 @@ object WeaponDefinitions {
         WeaponDef(
             id = "storm_cannon",
             name = "Storm Cannon",
-            description = "Pulse Cannon + Duplicator Core: rapid multi-bolt storm",
-            baseDamage = 18f,
-            baseCooldown = 0.25f,
-            baseProjectileSpeed = 700f,
-            baseProjectileCount = 3
+            description = "A spiral of bolts that fills the field",
         ),
         WeaponDef(
             id = "warp_saw",
             name = "Warp Saw",
-            description = "Energy Saw + Momentum Drive: the blade detaches and hunts on its own",
-            baseDamage = 15f,
-            baseCooldown = 0.125f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 1
+            description = "The blade detaches and hunts alone",
         ),
         WeaponDef(
             id = "leech_burst",
             name = "Leech Burst",
-            description = "Scatter Shot + Vampiric Core: healing pellets",
-            baseDamage = 10f,
-            baseCooldown = 0.5f,
-            baseProjectileSpeed = 550f,
-            baseProjectileCount = 13
+            description = "Pellets that heal you on hit",
         ),
         WeaponDef(
             id = "autonomous_ace",
             name = "Autonomous Ace",
-            description = "Homing Missiles + Combat Drone: supercharged drone AI",
-            baseDamage = 42f,
-            baseCooldown = 0.75f,
-            baseProjectileSpeed = 500f,
-            baseProjectileCount = 5
+            description = "Missiles split and chase new targets",
         ),
         WeaponDef(
             id = "frost_ring",
             name = "Frost Ring",
-            description = "Ion Orbiters + Cryo Field: slowing orbital ring",
-            baseDamage = 20f,
-            baseCooldown = 2f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 6
+            description = "Two rings of orbs, always turning",
         ),
         WeaponDef(
             id = "oblivion_beam",
             name = "Oblivion Beam",
-            description = "Railgun + Glass Cannon: always-on piercing lance",
-            baseDamage = 18f,
-            baseCooldown = 1.0f,
-            baseProjectileSpeed = 3000f,
-            baseProjectileCount = 1
+            description = "Always-on piercing lance",
         ),
         WeaponDef(
             id = "jackpot_mines",
             name = "Gambler's Mines",
-            description = "Space Mines + Lucky Star: mines with random effects",
-            baseDamage = 90f,
-            baseCooldown = 1.5f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 3
+            description = "Mines that sometimes hit the jackpot",
         ),
         WeaponDef(
             id = "phoenix_flare",
             name = "Phoenix Flare",
-            description = "Solar Storm + Phoenix Core: pulse rings erupt at enemy positions",
-            baseDamage = 47f,
-            baseCooldown = 0.75f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 1
+            description = "Three rings erupt where enemies stand",
         ),
         WeaponDef(
             id = "lingering_nova",
             name = "Lingering Nova",
-            description = "Nova Blast + Revenge Protocol: detonates twice on the same spot",
-            baseDamage = 30f,
-            baseCooldown = 3f,
-            baseProjectileSpeed = 0f,
-            baseProjectileCount = 1
+            description = "Blasts, leaves a core, blasts again",
         ),
         WeaponDef(
             id = "siphon_needles",
             name = "Siphon Needles",
-            description = "Needle Gun + Nano Repair: healing rapid fire",
-            baseDamage = 9f,
-            baseCooldown = 0.125f,
-            baseProjectileSpeed = 900f,
-            baseProjectileCount = 7
+            description = "Piercing needles that heal you on hit",
         ),
         WeaponDef(
             id = "hunter_killer",
             name = "Hunter-Killer",
-            description = "Cluster Bomb + Magnet Field: relentless homing torpedo, double rate",
-            baseDamage = 60f,
-            baseCooldown = 1.0f,
-            baseProjectileSpeed = 200f,
-            baseProjectileCount = 1
+            description = "Homing torpedo, fired twice as often",
         ),
         WeaponDef(
             id = "flak_barrage",
             name = "Flak Barrage",
-            description = "Flak Cannon + Extra Weapon Slot: rapid cluster fire",
-            baseDamage = 25f,
-            baseCooldown = 0.5f,
-            baseProjectileSpeed = 450f,
-            baseProjectileCount = 5
+            description = "A burst of five exploding shells",
         )
     )
 

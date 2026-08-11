@@ -18,6 +18,26 @@ class ScatterShot : Weapon(
     name = "Scatter Shot",
     description = "Wide spread of pellets"
 ) {
+    companion object {
+        /**
+         * How wide the pellets throw, before `areaMultiplier`.
+         *
+         * **30 degrees, halved from 60 on 2026-08-11.** Reported independently by two
+         * players: the weapon's damage stat is mid-table, but a 60-degree throw put most of the
+         * pellets nowhere near the target, so the shortfall was accuracy rather than damage.
+         * Narrowing the cone raises effective damage without touching the damage number, which is
+         * also why the level bonus ("+2 pellets") starts being felt.
+         *
+         * Still deliberately wide enough to read as a shotgun — the identity is the spread, and a
+         * cone this weapon could not miss with would just be a machine gun.
+         *
+         * [LeechBurst][com.astroloop.game.weapon.weapons.LeechBurst] reads this rather than
+         * declaring its own, so the evolution can never end up throwing wider than the weapon it
+         * replaced. It previously carried a copy and a comment saying they matched.
+         */
+        val SPREAD_CONE_RADIANS = PI.toFloat() / 6f
+    }
+
     override val baseDamage = 10f
     override val baseCooldown = 1.0f
     override val beatPhaseOffsetMs: Long = 500L
@@ -44,7 +64,7 @@ class ScatterShot : Weapon(
         val damage = getDamage(state)
         val speed = getProjectileSpeed(state)
         val count = getProjectileCount(state)
-        val spreadAngle = PI.toFloat() / 3f * state.areaMultiplier // 60 degree cone
+        val spreadAngle = SPREAD_CONE_RADIANS * state.areaMultiplier
 
         for (i in 0 until count) {
             // Random spread within cone

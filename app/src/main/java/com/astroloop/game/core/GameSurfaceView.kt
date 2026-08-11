@@ -15,6 +15,7 @@ import com.astroloop.game.MainActivity
 import com.astroloop.game.BuildConfig
 import com.astroloop.game.data.CrystalFightLines
 import com.astroloop.game.data.CorruptedCrewDefinitions
+import com.astroloop.game.data.BossHintDefinitions
 import com.astroloop.game.data.DesertDefinitions
 import com.astroloop.game.data.LoopDefinitions
 import com.astroloop.game.data.HighScoreManager
@@ -90,6 +91,7 @@ class GameSurfaceView(
 
     // Crystal death freeze delay
     private var crystalFreezeDelay = 0f
+    private val crystalRewind = CrystalRewind()
 
     // Death play-out: game world keeps running for 2s after death before crystal
     private var deathPlayOutTimer = 0f
@@ -252,6 +254,10 @@ class GameSurfaceView(
     private var desertStopCheckReached = false
     private var desertStopCheckTimer = 0f
     private var desertStopCheckY = 0f  // Player Y when "We should stop" fires
+    // First pass through the desert offers no choice: Tobar's stop line never fires and the
+    // horror path is taken as soon as the escalation finishes. Decided once in initializeDesert()
+    // so the per-frame phase machine never touches persistence.
+    private var desertForcedHorror = false
     private var desertNorthDriveTimer = 0f  // Cumulative time actively driving north after STOP_CHECK
     private var desertEndingTimer = 0f
     private var desertFarewellFadeStarted = false
@@ -557,6 +563,10 @@ class GameSurfaceView(
 
         // Reset explosion and effects
         shipExplosion.reset()
+        // The hold is set fresh on each death; clear it so a restarted run's explosion behaves
+        // ordinarily until it is asked not to.
+        shipExplosion.holdDebris = false
+        crystalRewind.reset()
         enemyExplosions.clear()
         visualEffects.clear()
         fadingTrails.clear()
@@ -2799,10 +2809,13 @@ class GameSurfaceView(
             if (state.bossFightPhase < PHASE_OTHER_SPAWN) ship else crewmateEncounter.crewmateShip
         engineRestartTimer += deltaTime
 
-        // Struggle line on the sputter (uniform speaker across both runs).
-        if (!engineStruggleLineFired && engineRestartTimer >= 0.3f) {
+        // Struggle line, uniform speaker across both runs — and held back until the engine is
+        // ramping. Both perspectives call startEngineRestart() on the same frame as TB-26's
+        // "Since when do I listen?", so this delay is also how long his line survives; at 0.3f it
+        // was wiped almost as it appeared. See FleetSystem.ENGINE_STRUGGLE_LINE_AT.
+        if (!engineStruggleLineFired && engineRestartTimer >= FleetSystem.ENGINE_STRUGGLE_LINE_AT) {
             engineStruggleLineFired = true
-            radioSystem.showScriptedMessage(state, "ASTRO", "Come on—",
+            radioSystem.showScriptedMessage(state, "ASTRO", "Come on...",
                 PilotDefinitions.getPilot("pilot_astro")!!.color)
         }
 
@@ -4051,9 +4064,12 @@ class GameSurfaceView(
                             state.bossEmpFired = true
                             weaponSystem.empHitOrbiters()
                             visualEffects.addBossShockwave(boss.position.x, boss.position.y)
-                            FleetSystem.scatterEntity(ship, boss.position.x, boss.position.y)
+                            // empFreeze, not scatterEntity: the engine dies before the shove, so
+                            // the coast cannot inherit the speed the player was fleeing at and tow
+                            // the camera off the boss for the whole 62s charge.
+                            FleetSystem.empFreeze(ship, boss.position.x, boss.position.y)
                             val emp1Def = PilotDefinitions.getPilot(startingPilotId)
-                            val emp1Line = LoopDefinitions.empReactionLines[startingPilotId] ?: "EMP— I can't move—"
+                            val emp1Line = LoopDefinitions.empReactionLines[startingPilotId] ?: "EMP... I can't move..."
                             radioSystem.showScriptedMessage(state, emp1Def?.callsign ?: "ASTRO", emp1Line,
                                 emp1Def?.color ?: PilotDefinitions.getPilot("pilot_astro")!!.color)
                             // Reset chatter steps so the sub-sequence starts clean
@@ -4200,7 +4216,7 @@ class GameSurfaceView(
                     3 -> {
                         if (state.fleetChatterTimer >= 2f) {
                             radioSystem.showScriptedMessage(state, "KRAKEN",
-                                "EMP hit— losing control—",
+                                "EMP hit... losing control...",
                                 PilotDefinitions.getPilot("pilot_kraken")!!.color)
                             state.fleetChatterStep = 4
                             state.fleetChatterTimer = 0f
@@ -4218,7 +4234,7 @@ class GameSurfaceView(
                     5 -> {
                         if (state.fleetChatterTimer >= 2f) {
                             radioSystem.showScriptedMessage(state, "WHISKERS",
-                                "Can't steer— get through!",
+                                "Can't steer... get through!",
                                 PilotDefinitions.getPilot("pilot_whiskers")!!.color)
                             state.fleetChatterStep = 6
                             state.fleetChatterTimer = 0f
@@ -4227,7 +4243,7 @@ class GameSurfaceView(
                     6 -> {
                         if (state.fleetChatterTimer >= 2f) {
                             radioSystem.showScriptedMessage(state, "HAVOC",
-                                "NEARLY CHARGED— SOMEONE—",
+                                "NEARLY CHARGED... SOMEONE...",
                                 PilotDefinitions.getPilot("pilot_havoc")!!.color)
                             state.fleetChatterStep = 7
                             state.fleetChatterTimer = 0f
@@ -4468,7 +4484,6 @@ class GameSurfaceView(
                             boss.position.set(ship.position.x, ship.position.y)
                             state.playerStunned = true  // Crystal Astro holds position
                             crewmateEncounter.frozen = true
-                            crewmateEncounter.crewmateShip?.velocity?.zero()
                             // EMP #1 — the charge opens with an EMP that instantly freezes
                             // Past Astro, mirroring the lone player's freeze in the normal fight.
                             // (Deliberately does NOT set bossEmpFired — EMP #2 still needs it false.)
@@ -4476,12 +4491,12 @@ class GameSurfaceView(
                             weaponSystem.empHitOrbiters()
                             visualEffects.addBossShockwave(boss.position.x, boss.position.y)
                             crewmateEncounter.crewmateShip?.let {
-                                FleetSystem.scatterEntity(it, boss.position.x, boss.position.y)
+                                FleetSystem.empFreeze(it, boss.position.x, boss.position.y)
                             }
                             // Past Astro's reaction — same frame as the EMP, mirroring the
                             // lone player's reaction in the normal fight
                             radioSystem.showScriptedMessage(state, "ASTRO",
-                                LoopDefinitions.empReactionLines["pilot_astro"] ?: "EMP— I can't move—",
+                                LoopDefinitions.empReactionLines["pilot_astro"] ?: "EMP... I can't move...",
                                 PilotDefinitions.getPilot("pilot_astro")!!.color)
                             state.fleetChatterStep = 7
                             state.fleetChatterTimer = 0f
@@ -4651,7 +4666,7 @@ class GameSurfaceView(
                     3 -> {
                         if (state.fleetChatterTimer >= 2f) {
                             radioSystem.showScriptedMessage(state, "KRAKEN",
-                                "EMP hit— losing control—",
+                                "EMP hit... losing control...",
                                 PilotDefinitions.getPilot("pilot_kraken")!!.color)
                             state.fleetChatterStep = 4
                             state.fleetChatterTimer = 0f
@@ -4669,7 +4684,7 @@ class GameSurfaceView(
                     5 -> {
                         if (state.fleetChatterTimer >= 2f) {
                             radioSystem.showScriptedMessage(state, "WHISKERS",
-                                "Can't steer— get through!",
+                                "Can't steer... get through!",
                                 PilotDefinitions.getPilot("pilot_whiskers")!!.color)
                             state.fleetChatterStep = 6
                             state.fleetChatterTimer = 0f
@@ -4678,7 +4693,7 @@ class GameSurfaceView(
                     6 -> {
                         if (state.fleetChatterTimer >= 2f) {
                             radioSystem.showScriptedMessage(state, "HAVOC",
-                                "NEARLY CHARGED— SOMEONE—",
+                                "NEARLY CHARGED... SOMEONE...",
                                 PilotDefinitions.getPilot("pilot_havoc")!!.color)
                             state.fleetChatterStep = 7
                             state.fleetChatterTimer = 0f
@@ -5114,6 +5129,7 @@ class GameSurfaceView(
         desertStopCheckY = 0f
         desertNorthDriveTimer = 0f
         desertEndingTimer = 0f
+        desertForcedHorror = DesertDefinitions.isForcedHorror(state.storyLoop)
 
         // Reset ship to world origin so desert starts from a clean slate
         ship.position.set(0f, 0f)
@@ -6091,7 +6107,7 @@ class GameSurfaceView(
 
         val lines = when (state.desertPhase) {
             0 -> DesertDefinitions.phase1Lines
-            1 -> DesertDefinitions.phase2Lines
+            1 -> DesertDefinitions.phase2LinesFor(desertForcedHorror)
             2 -> DesertDefinitions.horrorLines
             3 -> DesertDefinitions.crystalLines
             4 -> DesertDefinitions.goodEndingLines
@@ -6183,6 +6199,26 @@ class GameSurfaceView(
         }
     }
 
+    /**
+     * Commit to the horror path: Astro rationalises, the settlement is placed ahead, and phase 2
+     * takes over. Reached either by driving north past Tobar's warning, or — on the forced first
+     * pass, where that warning never comes — as soon as the escalation dialogue runs out.
+     */
+    private fun enterDesertHorrorPath() {
+        radioSystem.showScriptedMessage(state, "ASTRO", "...Orders are orders.", DesertDefinitions.ASTRO_COLOR)
+        state.desertPhase = 2
+        state.desertDialogueStep = 0
+        state.desertDialogueTimer = 0f
+        desertEndingTimer = 0f
+        // Spawn settlement ahead for bombardment. 1.5 screens north (was 3) so the
+        // silent northward crawl is ~10s and ends with the settlement + energy wall
+        // cresting into view — the player still drives the whole way themselves.
+        desertSettlementWorldY = ship.position.y - screenHeight * 1.5f
+        desertSettlementProgress = 1f
+        spawnDesertSettlementBuildings()
+        spawnDesertCivilians()
+    }
+
     private fun updateDesertPhaseTransitions(deltaTime: Float) {
         when (state.desertPhase) {
             0 -> {
@@ -6196,6 +6232,15 @@ class GameSurfaceView(
                 }
             }
             1 -> {
+                // Forced first pass: there is no stop line and no choice. The moment the
+                // escalation finishes, the horror path is taken on the player's behalf.
+                if (desertForcedHorror) {
+                    if (state.desertDialogueStep >= DesertDefinitions.phase2LinesFor(true).size) {
+                        enterDesertHorrorPath()
+                    }
+                    return
+                }
+
                 // Phase 1: After "We should stop" is shown, check for good ending vs horror
                 // Good ending: stop (5s not actively driving north) or drive south. Horror: drive 300f north.
                 // Timer only ticks when the player is not actively heading north — so stopping at any
@@ -6214,18 +6259,7 @@ class GameSurfaceView(
                         desertEndingTimer = 0f
                     } else if (movedNorth) {
                         // Horror path — player drove north toward settlement
-                        radioSystem.showScriptedMessage(state, "ASTRO", "...Orders are orders.", DesertDefinitions.ASTRO_COLOR)
-                        state.desertPhase = 2
-                        state.desertDialogueStep = 0
-                        state.desertDialogueTimer = 0f
-                        desertEndingTimer = 0f
-                        // Spawn settlement ahead for bombardment. 1.5 screens north (was 3) so the
-                        // silent northward crawl is ~10s and ends with the settlement + energy wall
-                        // cresting into view — the player still drives the whole way themselves.
-                        desertSettlementWorldY = ship.position.y - screenHeight * 1.5f
-                        desertSettlementProgress = 1f
-                        spawnDesertSettlementBuildings()
-                        spawnDesertCivilians()
+                        enterDesertHorrorPath()
                     }
                 }
             }
@@ -7908,6 +7942,11 @@ class GameSurfaceView(
         enemyExplosions.forEach { it.update(deltaTime) }
         enemyExplosions.removeAll { !it.isActive }
 
+        // Break off the Vampiric Core stream. renderPlaying still draws these during the play-out,
+        // and updatePlaying — which normally advances them — has stopped, so without this they
+        // stand still on screen for the whole death sequence.
+        vampiricLeecherSystem.fadeOut(deltaTime)
+
         // Get all active entities
         EntityPools.asteroids.getActiveEntities(activeAsteroids)
         EntityPools.projectiles.getActiveEntities(activeProjectiles)
@@ -7999,6 +8038,10 @@ class GameSurfaceView(
             crystalDelayTimer = 0f
             crystalDelayActive = false  // Skip dead pause — go straight to crystal animation
             crystalRenderer.activateDeath(screenWidth, screenHeight)
+            // Time starts running backwards as the lattice starts spreading: the crystal IS the
+            // rewind, not a reaction to it. Snapshot first — rewind() interpolates from here.
+            shipExplosion.captureScatter()
+            crystalRewind.start()
             SoundManager.playSFX("sfx_crystal_activate")
         }
     }
@@ -8024,7 +8067,29 @@ class GameSurfaceView(
             return
         }
 
-        // Update crystal overlay only — everything else is frozen
+        // Update crystal overlay only — everything else is frozen, except time itself, which is
+        // running backwards. This is a pass of its own rather than the normal update in reverse:
+        // homing projectiles steer, orbiters track the ship and enemy AI re-aims every frame, so
+        // reversing velocities through the real systems would produce nonsense. Nothing steers
+        // here because none of those systems run.
+        if (crystalRewind.isRunning) {
+            val step = deltaTime
+            for (a in EntityPools.asteroids.getActiveEntities()) {
+                a.position.add(-a.velocity.x * step, -a.velocity.y * step)
+            }
+            for (p in EntityPools.projectiles.getActiveEntities()) {
+                p.position.add(-p.velocity.x * step, -p.velocity.y * step)
+            }
+            for (e in EntityPools.enemies.getActiveEntities()) {
+                e.position.add(-e.velocity.x * step, -e.velocity.y * step)
+            }
+            for (u in EntityPools.powerUps.getActiveEntities()) {
+                u.position.add(-u.velocity.x * step, -u.velocity.y * step)
+            }
+            crystalRewind.update(deltaTime)
+            shipExplosion.rewind(crystalRewind.progress)
+        }
+
         crystalRenderer.update(deltaTime)
 
         if (crystalRenderer.isComplete) {
@@ -8033,6 +8098,9 @@ class GameSurfaceView(
     }
 
     private fun gameOver(skipCrystal: Boolean = false) {
+        // Hold the pieces past their lifetime so the crystal rewind has something to fly back
+        // together. Opt-in per instance: enemy explosions never set this and are unaffected.
+        shipExplosion.holdDebris = true
         // Start explosion
         shipExplosion.start(
             ship.position.x,
@@ -8107,6 +8175,19 @@ class GameSurfaceView(
             BandanaAward.maybeAward(persistence, state.activePilotId, state.survivalTime)
         }
 
+        // A failed attempt at the ten-minute boss earns a hint on the next return. Only a real
+        // death counts: the boss-survived path saves stats with includeDeath = false, as do the
+        // retreat and the story transitions. Normal runs only — Astro Loop scores time and the
+        // corruption run has its own script, so neither wants this nudge.
+        if (includeDeath && state.survivalTime >= Boss.SPAWN_TIME &&
+            !state.astroLoopMode && !state.isCorruptionRun
+        ) {
+            val track = if (state.activePilotId == "pilot_astro") BossHintDefinitions.Track.ASTRO
+                        else BossHintDefinitions.Track.SOLO
+            persistence.incrementBossFailures(track)
+            persistence.setPendingBossHint(track)
+        }
+
         telemetryManager.logRunEnd(
             causeOfDeath = state.lastDamageSource,
             survivedSeconds = state.survivalTime,
@@ -8160,6 +8241,20 @@ class GameSurfaceView(
                     renderDesert(canvas)
                 } else {
                     renderPlaying(canvas)
+                }
+                // The ship coming back. The debris fly home under their own fade, then hand over
+                // to this as the rewind closes — without it they simply arrive and stay debris.
+                //
+                // Inside the camera transform, because ship.position is a world coordinate and
+                // renderPlaying has already restored to screen space by the time it returns.
+                // Drawing it outside puts the ship at its world position on the screen, which is
+                // off-view for any camera not sitting at the origin.
+                val shipAlpha = ShipExplosion.shipAlphaAt(crystalRewind.progress)
+                if (shipAlpha > 0f) {
+                    canvas.save()
+                    canvas.translate(-camera.x, -camera.y)
+                    vectorRenderer.renderRestoredShip(canvas, ship, state, shipAlpha)
+                    canvas.restore()
                 }
                 crystalRenderer.render(canvas, screenWidth, screenHeight)
             }
@@ -8343,7 +8438,10 @@ class GameSurfaceView(
 
 
         // Render vampiric leech particles
-        vectorRenderer.renderLeechParticles(canvas, vampiricLeecherSystem.particles, ship.position.x, ship.position.y)
+        vectorRenderer.renderLeechParticles(
+            canvas, vampiricLeecherSystem.particles, ship.position.x, ship.position.y,
+            vampiricLeecherSystem.fadeAlpha
+        )
 
         // Revenge Protocol visual when active
         if (state.revengeActive) {
@@ -8647,6 +8745,14 @@ class GameSurfaceView(
                     val persistence = PersistenceManager(context)
                     persistence.resetAllProgress()
                     persistence.setYen(10_000_000)
+                    // resetAllProgress re-arms the first-launch intro, and the hangar's
+                    // first-launch branch opens by zeroing yen (HangarSurfaceView:297). Because
+                    // surfaceCreated is deferred it lands *after* the money is banked and wiped
+                    // it every time — a rich reset put you in the bar with 0. Marking the intro
+                    // done keeps the yen, and is right on its own terms: this reset exists to jump
+                    // to a late-game state, which is not something to sit through an opening for.
+                    persistence.setFirstLaunchComplete()
+                    persistence.setIntroDone()
                     telemetryManager.clearLog()
                     persistence.unlockAllShipsAndPilots()
                     for (id in listOf("health", "shields", "speed", "damage", "crit", "yen_bonus", "salvage", "magnet")) {

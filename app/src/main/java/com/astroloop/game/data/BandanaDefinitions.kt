@@ -1,9 +1,9 @@
 package com.astroloop.game.data
 
 /**
- * Per-pilot bandana accent colors. Each is the high-contrast complement of the
- * pilot's signature color. Used for the code-drawn walker-dot band; the grid
- * portraits use the PNG bandana set.
+ * Per-pilot bandana accent colors, and the authoritative copy of them: each is
+ * the high-contrast complement of the pilot's signature color. Used for the
+ * code-drawn walker-dot band; the grid portraits use the PNG bandana set.
  */
 object BandanaDefinitions {
 

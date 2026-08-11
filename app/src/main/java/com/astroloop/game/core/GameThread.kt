@@ -38,6 +38,23 @@ class GameThread(
             lastFrameTime = frameStart
             val clampedDelta = deltaTime.coerceAtMost(0.033f)
 
+            // Never lock a surface that has already been torn down.
+            //
+            // lockHardwareCanvas + unlockCanvasAndPost posts the frame to HWUI's RenderThread
+            // (DrawFrameTask::postAndWait). If the surface was destroyed since we last drew, that
+            // post lands on an abandoned buffer queue, and on some drivers — Samsung's Android 9
+            // Mali stack among them — HWUI asserts and aborts the process rather than degrading.
+            // The reported crash is exactly that sequence: surfaceDestroyed, then our frame 13ms
+            // later, then SIGABRT in EglManager::damageFrame with EGL_BAD_ACCESS.
+            if (!surfaceHolder.surface.isValid) {
+                try {
+                    sleep(GameConfig.FRAME_TIME_MS)
+                } catch (e: InterruptedException) {
+                    // Ignore — the loop condition is re-checked immediately.
+                }
+                continue
+            }
+
             try {
                 canvas = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     try {
@@ -97,7 +114,19 @@ class GameThread(
         isRunning = false
         interrupt()          // wake the thread immediately if it's sleeping
         try {
-            join(1000)       // increased from 500 ms
+            // Generous, but still bounded. This was join(1000), and that timeout was the bug:
+            // when it expired the loop was still alive, so the caller went on to swap the content
+            // view while we kept posting frames into a surface being destroyed underneath us,
+            // which aborts the process on some drivers — the same crash the surface-validity
+            // check in the loop above exists to prevent.
+            //
+            // Three seconds rather than no limit at all. A healthy exit takes under one frame —
+            // the loop body is bounded by a frame plus its sleep, and interrupt() above wakes that
+            // sleep — so nothing legitimate reaches this timeout and the race window is closed in
+            // every realistic case. Removing the bound entirely would close it in *all* cases, but
+            // this runs on the UI thread: a game thread wedged behind a stalled RenderThread would
+            // then hang the app rather than recover, trading a crash for an ANR. The valve stays.
+            join(3000)
         } catch (e: InterruptedException) {
             e.printStackTrace()
         }

@@ -116,6 +116,23 @@ class FleetSystem(
         const val FLEET_WARP_BEAT = 4f
 
         /**
+         * When Astro's "Come on—" lands, in seconds since the restart began.
+         *
+         * Both perspectives start the restart on the **same frame** TB-26 says "Since when do I
+         * listen?", so this doubles as how long his line holds the screen before being replaced.
+         * At the original 0.3f it held for 0.3s of its 4s `DISPLAY_DURATION` and the two lines ran
+         * together — the owner reported it as barely any gap.
+         *
+         * Derived from the restart's own phases rather than written as a literal, because getting
+         * it wrong fails silently: `updateEngineRestart` returns early once `engineRestarting`
+         * clears at `SPUTTER + RAMP`, so a delay past that deletes the line rather than moving it.
+         * 60% into the ramp keeps it comfortably inside, and moves it off the sputter — the line
+         * now reads as straining the ship up to speed rather than as coughing it awake, which is
+         * the cost of the extra beat and worth it.
+         */
+        const val ENGINE_STRUGGLE_LINE_AT = ENGINE_SPUTTER_DURATION + ENGINE_RAMP_DURATION * 0.6f
+
+        /**
          * Autopilot move-speed multiplier during an engine restart: 0 while sputtering,
          * eases linearly 0→1 over the ramp, then holds at full. [t] is seconds since the
          * restart began.
@@ -146,6 +163,23 @@ class FleetSystem(
          * rotation tumble. Same treatment fleet ships get in applyEmpScatter(); recovery (if
          * any) is the caller's responsibility. Safe when target is on the source.
          */
+        /**
+         * EMP #1 on the party being frozen: kill the engine, then shove.
+         *
+         * Zeroing first is what bounds the coast. The scatter is an impulse, not a speed cap, so
+         * shoving a ship that was already fleeing at full throttle just adds to the escape — and
+         * because the camera follows the player, a fast build EMP'd at speed in the normal run
+         * towed the view clean off the boss while it charged. The corruption run had always zeroed
+         * Past Astro first; this is that same gesture, shared, so the two ends of the scene cannot
+         * drift apart again.
+         *
+         * Both perspectives of the 10-minute encounter go through here.
+         */
+        fun empFreeze(target: Entity, fromX: Float, fromY: Float) {
+            target.velocity.zero()
+            scatterEntity(target, fromX, fromY)
+        }
+
         fun scatterEntity(target: Entity, fromX: Float, fromY: Float) {
             val dx = target.position.x - fromX
             val dy = target.position.y - fromY

@@ -43,8 +43,8 @@ class CrystalFightLinesTest {
     // NOTE: "Astro never speaks during the fight" is deliberately NOT tested here. taunt() has
     // no speaker field — the speaker is hardcoded to CRYSTAL_CALLSIGN at the GameSurfaceView call
     // site — so any data-level assertion would be vacuous. The invariant is enforced by there
-    // being exactly one showScriptedMessage call in updateReckoningFight, and by the playtest
-    // checklist. Do not add a fake test here to feel covered.
+    // being exactly one showScriptedMessage call in updateReckoningFight, and on a device by
+    // watching the fight. Do not add a fake test here to feel covered.
 
     @Test fun ghostScriptIsChronological() {
         val times = CrystalFightLines.ghostScript.map { it.third }

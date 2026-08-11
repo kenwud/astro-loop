@@ -6,14 +6,18 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
+import com.astroloop.game.core.AudioMode
 import com.astroloop.game.core.GameConfig
 import com.astroloop.game.core.LayoutRect
 import com.astroloop.game.core.StoryStateManager
+import com.astroloop.game.data.CrystalCardBack
 import com.astroloop.game.data.PersistenceManager
+import com.astroloop.game.data.StoreUpgradeDefinitions
 import com.astroloop.game.render.CrystalOrbPath
 import com.astroloop.game.render.CrystalPalette
 import com.astroloop.game.render.FontManager
 import com.astroloop.game.render.IconCache
+import com.astroloop.game.render.TextWrap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.PI
 import kotlin.math.cos
@@ -49,7 +53,10 @@ class StorePageRenderer(
 
     val upgradeRects = CopyOnWriteArrayList<RectF>()
     val storeButtonRects = CopyOnWriteArrayList<RectF>()
-    var crystalTileRect = RectF()
+    // Written every frame on the game thread (draw(), below) and read from the UI thread on every
+    // tap (HangarSurfaceView.handleStoreTap, for the tile-9 hit test) — @Volatile so the touch
+    // handler is guaranteed to see the current rect rather than a stale or torn one.
+    @Volatile var crystalTileRect = RectF()
 
     private val bitmapPaint = Paint().apply {
         isFilterBitmap = true
@@ -61,6 +68,15 @@ class StorePageRenderer(
         textAlign = Paint.Align.CENTER
         typeface = FontManager.getRegular()
     }
+
+    // Shared across the upgrade grid — color/alpha mutated per-tile before each draw, same
+    // convention as textPaint/costPaint/crystalDescPaint above. Promoted out of drawStorePage's
+    // local scope so drawUpgradeFront/drawUpgradeBack (private methods) can reach them too.
+    private val tileBorderPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+    }
+    private val pipPaint = Paint().apply { style = Paint.Style.FILL }
 
     lateinit var drawRoomFrame: (Canvas, Boolean, Boolean, Boolean) -> Unit
 
@@ -106,34 +122,10 @@ class StorePageRenderer(
             color = 0xFF1A1A2E.toInt()
             style = Paint.Style.FILL
         }
-        val tileBorderPaint = Paint().apply {
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-        }
 
-        data class UpgradeTile(
-            val name: String,
-            val id: String?,          // null = NG+ locked
-            val effect: String,
-            val isNgPlus: Boolean = false
-        )
-
-        val tiles = listOf(
-            // Row 1 — Survival
-            UpgradeTile("Salvage Plate", "health", "+10 max HP"),
-            UpgradeTile("Deflector Rig", "shields", "+10 max shield"),
-            UpgradeTile("Nitro Boost", "speed", "+5% speed"),
-            // Row 2 — Combat
-            UpgradeTile("Hot Rounds", "damage", "+5% damage"),
-            UpgradeTile("Lucky Rounds", "crit", "+5% crit chance"),
-            UpgradeTile("Haul Line", "magnet", "+15% pickup range"),
-            // Row 3 — Economy + NG+
-            UpgradeTile("Finder's Fee", "yen_bonus", "+20% yen"),
-            UpgradeTile("Scavenger Rig", "salvage", "+20% drop rate"),
-            UpgradeTile("Emergency Shield", "emergency_shield", "Survive a lethal hit", isNgPlus = true)
-        )
-
-        val pipPaint = Paint().apply { style = Paint.Style.FILL }
+        // Tiles live in StoreUpgradeDefinitions: the order below IS the grid layout, since each
+        // tile's row and column come from its index.
+        val tiles = StoreUpgradeDefinitions.tiles
 
         for ((index, tile) in tiles.withIndex()) {
             val row = index / cols
@@ -150,33 +142,37 @@ class StorePageRenderer(
                 if (StoryStateManager.isAstroLoop(persistence)) {
                     // Emergency Shield — auto-equipped; mirrors the Time Crystal tile
                     canvas.drawRoundRect(rect, 6f, 6f, tileBgPaint)
-                    tileBorderPaint.color = CrystalPalette.MID   // icy cyan border
-                    canvas.drawRoundRect(rect, 6f, 6f, tileBorderPaint)
+                    if (state.storeFlipShowBack(index)) {
+                        drawShieldBack(canvas, rect, state.storeFlipProgress(index), tileSize)
+                    } else {
+                        tileBorderPaint.color = CrystalPalette.MID   // icy cyan border
+                        canvas.drawRoundRect(rect, 6f, 6f, tileBorderPaint)
 
-                    // Icon — top ~33%
-                    val shieldBitmap = IconCache.getStoreIcon("emergency_shield")
-                    if (shieldBitmap != null) {
-                        val iconSize = tileSize * 0.33f
-                        val iconLeft = rect.centerX() - iconSize / 2f
-                        val iconTop = rect.top + tileSize * 0.05f
-                        canvas.drawBitmap(shieldBitmap, null,
-                            RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize), bitmapPaint)
+                        // Icon — top ~33%
+                        val shieldBitmap = IconCache.getStoreIcon("emergency_shield")
+                        if (shieldBitmap != null) {
+                            val iconSize = tileSize * 0.33f
+                            val iconLeft = rect.centerX() - iconSize / 2f
+                            val iconTop = rect.top + tileSize * 0.05f
+                            canvas.drawBitmap(shieldBitmap, null,
+                                RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize), bitmapPaint)
+                        }
+
+                        // Name
+                        textPaint.textSize = (tileSize * 0.17f).coerceIn(14f, 24f)
+                        textPaint.color = CrystalPalette.ICE
+                        canvas.drawText("Emergency Shield", rect.centerX(), rect.top + tileSize * 0.52f, textPaint)
+
+                        // Description — aligns with the Time Crystal description row
+                        crystalDescPaint.textSize = (tileSize * 0.16f).coerceIn(13f, 22f)
+                        crystalDescPaint.color = CrystalPalette.DEEP
+                        canvas.drawText("Survive a lethal hit", rect.centerX(), rect.top + tileSize * 0.62f, crystalDescPaint)
+
+                        // Auto-equipped — aligns with the EQUIPPED row on the Time Crystal tile
+                        costPaint.textSize = (tileSize * 0.16f).coerceIn(13f, 22f)
+                        costPaint.color = 0xFF44FF44.toInt()
+                        canvas.drawText("EQUIPPED", rect.centerX(), rect.top + tileSize * 0.88f, costPaint)
                     }
-
-                    // Name
-                    textPaint.textSize = (tileSize * 0.17f).coerceIn(14f, 24f)
-                    textPaint.color = CrystalPalette.ICE
-                    canvas.drawText("Emergency Shield", rect.centerX(), rect.top + tileSize * 0.52f, textPaint)
-
-                    // Description — aligns with the Time Crystal description row
-                    crystalDescPaint.textSize = (tileSize * 0.16f).coerceIn(13f, 22f)
-                    crystalDescPaint.color = CrystalPalette.DEEP
-                    canvas.drawText("Survive a lethal hit", rect.centerX(), rect.top + tileSize * 0.62f, crystalDescPaint)
-
-                    // Auto-equipped — aligns with the EQUIPPED row on the Time Crystal tile
-                    costPaint.textSize = (tileSize * 0.16f).coerceIn(13f, 22f)
-                    costPaint.color = 0xFF44FF44.toInt()
-                    canvas.drawText("EQUIPPED", rect.centerX(), rect.top + tileSize * 0.88f, costPaint)
                     continue
                 }
             } else {
@@ -212,6 +208,9 @@ class StorePageRenderer(
                     // shifts when the story state flips.
                     textPaint.color = 0xFFAAAAAA.toInt()
                     canvas.drawText("?", rect.centerX(), rect.centerY() + tileSize * 0.05f, textPaint)
+                } else if (state.storeFlipShowBack(index)) {
+                    // Corrupted + crystal unlocked, flipped — AGAIN, tiled
+                    drawCrystalBack(canvas, rect, state.storeFlipProgress(index), tileSize)
                 } else {
                     // Corrupted + crystal unlocked — show Time Crystal tile (auto-equipped)
                     tileBorderPaint.color = CrystalPalette.MID   // icy cyan border
@@ -243,73 +242,27 @@ class StorePageRenderer(
                     canvas.drawText("EQUIPPED", rect.centerX(), rect.top + tileSize * 0.88f, costPaint)
                 }
             } else {
-                // Border
-                tileBorderPaint.color = 0xFFCC8844.toInt()
-                canvas.drawRoundRect(rect, 6f, 6f, tileBorderPaint)
-                val currentLevel = persistence.getUpgradeLevel(tile.id!!)
-                val maxLevel = 5
-
-                // Icon — top ~33% of tile
-                val iconBitmap = IconCache.getStoreIcon(tile.id)
-                if (iconBitmap != null) {
-                    val iconSize = tileSize * 0.33f
-                    val iconLeft = rect.centerX() - iconSize / 2f
-                    val iconTop = rect.top + tileSize * 0.05f
-                    // ITEM 24: always full alpha, no dimming on max
-                    bitmapPaint.alpha = 255
-                    canvas.drawBitmap(
-                        iconBitmap, null,
-                        RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize),
-                        bitmapPaint
+                // Hold-to-buy fill, drawn BEFORE the faces so it reads as the tile's background
+                // filling rather than a wash over the words: the copy has to stay readable while
+                // it rises. Then a short exit (a completion flash or a fade) rather than
+                // vanishing in one frame.
+                if (index == state.storeHoldIndex && state.storeHoldProgress > 0f) {
+                    drawHoldFill(canvas, rect, state.storeHoldProgress, alpha = 1f, flash = false)
+                } else if (index == state.storeHoldExitIndex && state.storeHoldExitAlpha > 0f) {
+                    drawHoldFill(
+                        canvas, rect, state.storeHoldExitProgress,
+                        alpha = state.storeHoldExitAlpha, flash = state.storeHoldExitSuccess
                     )
-                    bitmapPaint.alpha = 255
                 }
 
-                // Name — ~50% from top (ITEM 25: font size ~21% larger: 0.14 -> 0.17, coerceIn 12/18 -> 14/22)
-                textPaint.textSize = (tileSize * 0.17f).coerceIn(14f, 24f)
-                // ITEM 24: always white, no gray when maxed
-                textPaint.color = 0xFFFFFFFF.toInt()
-                canvas.drawText(tile.name, rect.centerX(), rect.top + tileSize * 0.52f, textPaint)
-
-                // Effect text — ~62% from top (ITEM 4: new effect description row)
-                val effectTextPaint = Paint().apply {
-                    isAntiAlias = true
-                    textAlign = Paint.Align.CENTER
-                    typeface = FontManager.getRegular()
-                    textSize = (tileSize * 0.16f).coerceIn(13f, 22f)
-                    color = 0xFFAAAAAA.toInt()
-                }
-                canvas.drawText(tile.effect, rect.centerX(), rect.top + tileSize * 0.62f, effectTextPaint)
-
-                // Level pips — ~73% from top (ITEM 25: pip radius ~20% larger: 0.03->0.036, coerceIn 3/5 -> 3.6/6)
-                val pipRadius = (tileSize * 0.036f).coerceIn(3.6f, 6f)
-                val pipSpacing = pipRadius * 3.2f
-                val pipsWidth = (maxLevel - 1) * pipSpacing
-                val pipStartX = rect.centerX() - pipsWidth / 2f
-                val pipY = rect.top + tileSize * 0.73f
-
-                for (p in 0 until maxLevel) {
-                    val px = pipStartX + p * pipSpacing
-                    if (p < currentLevel) {
-                        pipPaint.color = 0xFFCC8844.toInt()
-                        pipPaint.style = android.graphics.Paint.Style.FILL
-                    } else {
-                        pipPaint.color = 0xFF333344.toInt()
-                        pipPaint.style = android.graphics.Paint.Style.FILL
-                    }
-                    canvas.drawCircle(px, pipY, pipRadius, pipPaint)
-                }
-
-                // Cost / MAX — ~88% from top (ITEM 25: font size ~23% larger: 0.13->0.16, coerceIn 11/16 -> 13/20)
-                if (currentLevel >= maxLevel) {
-                    costPaint.textSize = (tileSize * 0.16f).coerceIn(13f, 22f)
-                    costPaint.color = 0xFF44FF44.toInt()
-                    canvas.drawText("MAX", rect.centerX(), rect.top + tileSize * 0.88f, costPaint)
+                val flipAlpha = state.storeFlipProgress(index)
+                val currentLevel = persistence.getUpgradeLevel(tile.id!!)
+                if (state.storeFlipShowBack(index)) {
+                    drawUpgradeBack(canvas, rect, tile, currentLevel, flipAlpha, tileSize)
                 } else {
-                    val cost = PersistenceManager.getUpgradeCost(currentLevel)
-                    costPaint.textSize = (tileSize * 0.16f).coerceIn(13f, 22f)
-                    costPaint.color = 0xFFFFD700.toInt()
-                    canvas.drawText(GameConfig.formatYen(cost), rect.centerX(), rect.top + tileSize * 0.88f, costPaint)
+                    // A card mid-peek is fading its front out; one at rest draws at full alpha.
+                    val frontAlpha = if (state.isStoreCardFlipped(index)) flipAlpha else 1f
+                    drawUpgradeFront(canvas, rect, tile, currentLevel, frontAlpha, tileSize)
                 }
             }
         }
@@ -408,6 +361,368 @@ class StorePageRenderer(
         textPaint.color = 0xFFFFFFFF.toInt()
         textPaint.textAlign = Paint.Align.CENTER
         canvas.restore()
+    }
+
+    /**
+     * Whether tile 9 is showing a real face rather than a `?`.
+     *
+     * Mirrors the branch structure in `drawStorePage` exactly. Both mystery branches must answer
+     * false together — a tile that flips in one and not the other would visibly differ across a
+     * story-state change, which the source explicitly forbids.
+     */
+    fun isCrystalTileRevealed(persistence: PersistenceManager, state: HangarState): Boolean {
+        if (StoryStateManager.isAstroLoop(persistence)) return true
+        if (!StoryStateManager.isCorrupted(persistence)) return false
+        return persistence.isCrystalUnlocked() && !state.awaitingCrystalReveal
+    }
+
+    /**
+     * The hold-to-buy fill along a tile's foot — a live sweep while [alpha] is 1, or a decaying
+     * exit (a completion [flash] or a plain fade) once the hold has ended.
+     *
+     * Clipped to the tile's own rounded shape rather than drawn as a plain rect: the tile is a
+     * 6f-radius round rect, and a square-cornered fill flush with the bottom edge shows nubs
+     * poking past the rounded corners.
+     */
+    /**
+     * The hold-to-buy fill: the tile's whole background flooding from the bottom up.
+     *
+     * Owner, 2026-08-09 — the first cut was a thin gold bar sweeping left to right along the foot
+     * of the tile, which was easy to miss and told the player nothing about how much longer to
+     * hold. Filling the box itself makes the progress the size of the thing being bought.
+     *
+     * **The colour is chosen to be seen through.** A bright or warm wash would sit on top of the
+     * tile's gold cost row and white name and bleach them; a deep, cool tint darkens the tile
+     * enough to show a hard waterline against the unfilled part while leaving light text readable
+     * on both sides of it. This is drawn *under* the faces for the same reason. The two constants
+     * below are the tuning knobs if it still reads badly on a device — S2 covers it.
+     */
+    private fun drawHoldFill(canvas: Canvas, rect: RectF, progress: Float, alpha: Float, flash: Boolean) {
+        val filled = rect.height() * progress.coerceIn(0f, 1f)
+        val fillTop = rect.bottom - filled
+
+        pipPaint.color = if (flash) HOLD_FILL_FLASH_COLOR else HOLD_FILL_COLOR
+        pipPaint.alpha = ((if (flash) 210 else HOLD_FILL_ALPHA) * alpha.coerceIn(0f, 1f))
+            .toInt().coerceIn(0, 255)
+        canvas.save()
+        // Clip to the rising waterline, then paint the tile's own rounded shape so the fill picks
+        // up the bottom corners instead of showing square nubs outside them.
+        canvas.clipRect(rect.left, fillTop, rect.right, rect.bottom)
+        canvas.drawRoundRect(rect, 6f, 6f, pipPaint)
+        canvas.restore()
+        pipPaint.alpha = 255
+    }
+
+    /**
+     * A normal tile's front: icon, name, effect line, level pips and the cost row.
+     *
+     * [alpha] scales every paint so the front can cross-fade out when the card flips. At rest it is
+     * 1f and this draws exactly what it always drew.
+     */
+    private fun drawUpgradeFront(
+        canvas: Canvas,
+        rect: RectF,
+        tile: StoreUpgradeDefinitions.UpgradeTile,
+        currentLevel: Int,
+        alpha: Float,
+        tileSize: Float
+    ) {
+        val a = (255 * alpha).toInt().coerceIn(0, 255)
+        val maxLevel = 5
+
+        // Border
+        tileBorderPaint.color = 0xFFCC8844.toInt()
+        tileBorderPaint.alpha = a
+        canvas.drawRoundRect(rect, 6f, 6f, tileBorderPaint)
+        tileBorderPaint.alpha = 255
+
+        // Icon — top ~33% of tile
+        val iconBitmap = IconCache.getStoreIcon(tile.id)
+        if (iconBitmap != null) {
+            val iconSize = tileSize * 0.33f
+            val iconLeft = rect.centerX() - iconSize / 2f
+            val iconTop = rect.top + tileSize * 0.05f
+            // ITEM 24: always full alpha, no dimming on max
+            bitmapPaint.alpha = a
+            canvas.drawBitmap(
+                iconBitmap, null,
+                RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize),
+                bitmapPaint
+            )
+            bitmapPaint.alpha = 255
+        }
+
+        // Name — ~50% from top (ITEM 25: font size ~21% larger: 0.14 -> 0.17, coerceIn 12/18 -> 14/22)
+        textPaint.textSize = (tileSize * 0.17f).coerceIn(14f, 24f)
+        // ITEM 24: always white, no gray when maxed
+        textPaint.color = 0xFFFFFFFF.toInt()
+        textPaint.alpha = a
+        canvas.drawText(tile.name, rect.centerX(), rect.top + tileSize * 0.52f, textPaint)
+        textPaint.alpha = 255
+
+        // Effect text — ~62% from top (ITEM 4: new effect description row)
+        val effectTextPaint = Paint().apply {
+            isAntiAlias = true
+            textAlign = Paint.Align.CENTER
+            typeface = FontManager.getRegular()
+            textSize = (tileSize * 0.16f).coerceIn(13f, 22f)
+            color = 0xFFAAAAAA.toInt()
+        }
+        effectTextPaint.alpha = a
+        canvas.drawText(tile.effect, rect.centerX(), rect.top + tileSize * 0.62f, effectTextPaint)
+
+        // Level pips — ~73% from top (ITEM 25: pip radius ~20% larger: 0.03->0.036, coerceIn 3/5 -> 3.6/6)
+        val pipRadius = (tileSize * 0.036f).coerceIn(3.6f, 6f)
+        val pipSpacing = pipRadius * 3.2f
+        val pipsWidth = (maxLevel - 1) * pipSpacing
+        val pipStartX = rect.centerX() - pipsWidth / 2f
+        val pipY = rect.top + tileSize * 0.73f
+
+        for (p in 0 until maxLevel) {
+            val px = pipStartX + p * pipSpacing
+            if (p < currentLevel) {
+                pipPaint.color = 0xFFCC8844.toInt()
+                pipPaint.style = android.graphics.Paint.Style.FILL
+            } else {
+                pipPaint.color = 0xFF333344.toInt()
+                pipPaint.style = android.graphics.Paint.Style.FILL
+            }
+            pipPaint.alpha = a
+            canvas.drawCircle(px, pipY, pipRadius, pipPaint)
+        }
+        pipPaint.alpha = 255
+
+        drawCostRow(canvas, rect, currentLevel, maxLevel, a, tileSize)
+    }
+
+    /**
+     * The cost, or MAX once there is nothing left to buy.
+     *
+     * Drawn identically on both faces from `StoreBackLayout.PRICE_BASELINE`, so turning a card over
+     * does not move the figure. It is the one thing on the front that survives the flip, which is
+     * the point: the back is where the player decides, and the decision needs the price.
+     */
+    private fun drawCostRow(
+        canvas: Canvas,
+        rect: RectF,
+        currentLevel: Int,
+        maxLevel: Int,
+        a: Int,
+        tileSize: Float
+    ) {
+        costPaint.textSize = StoreTextSizes.frontBody(tileSize)
+        costPaint.alpha = a
+        val y = rect.top + tileSize * StoreBackLayout.PRICE_BASELINE
+        if (currentLevel >= maxLevel) {
+            costPaint.color = 0xFF44FF44.toInt()
+            canvas.drawText("MAX", rect.centerX(), y, costPaint)
+        } else {
+            costPaint.color = 0xFFFFD700.toInt()
+            canvas.drawText(
+                GameConfig.formatYen(PersistenceManager.getUpgradeCost(currentLevel)),
+                rect.centerX(), y, costPaint
+            )
+        }
+        costPaint.alpha = 255
+    }
+
+    /**
+     * The card back: what the player has accumulated, what one more level buys, and one plain
+     * sentence of what the thing does.
+     *
+     * The cost row is drawn here too, at the same baseline the front uses, so the figure does not
+     * move when the card turns — a player reading the back to decide whether to buy should not have
+     * to turn it over again to find the price. "Next" is omitted at max, where the cost row shows
+     * MAX instead.
+     */
+    private fun drawUpgradeBack(
+        canvas: Canvas,
+        rect: RectF,
+        tile: StoreUpgradeDefinitions.UpgradeTile,
+        level: Int,
+        alpha: Float,
+        tileSize: Float
+    ) {
+        val a = (255 * alpha).toInt().coerceIn(0, 255)
+
+        tileBorderPaint.color = 0xFFCC8844.toInt()
+        tileBorderPaint.alpha = a
+        canvas.drawRoundRect(rect, 6f, 6f, tileBorderPaint)
+
+        // Every size here comes from StoreTextSizes, which holds the rule that the back is never
+        // set smaller than the front — a rule about the resolved size, not the scale factor,
+        // because the coerceIn caps are what actually bind on an ordinary phone.
+        textPaint.textSize = StoreTextSizes.backTitle(tileSize)
+        textPaint.color = 0xFFCC8844.toInt()
+        textPaint.alpha = a
+        canvas.drawText("${tile.name}  $level/5", rect.centerX(), rect.top + tileSize * 0.14f, textPaint)
+
+        // Measure the description's wrap first: how many lines it takes is what decides whether
+        // everything fits, and StoreBackLayout needs the count to choose the leading and whether
+        // the next-level block survives.
+        crystalDescPaint.textSize = StoreTextSizes.backDetail(tileSize)
+        val detailLines = wrapToWidth(tile.detail, rect.width() * 0.88f, crystalDescPaint)
+        val effectLines = tile.effectsAt(level)
+        val nextLines = if (level < 5) tile.nextDeltas() else emptyList()
+        val plan = StoreBackLayout.plan(tileSize, effectLines.size, nextLines.size, detailLines.size)
+        val lineHeight = plan.lineStep
+
+        var y = rect.top + tileSize * StoreBackLayout.TOP
+
+        costPaint.textSize = StoreTextSizes.backEffect(tileSize)
+        costPaint.color = 0xFFFFD700.toInt()
+        costPaint.alpha = a
+        for (line in effectLines) {
+            canvas.drawText(line, rect.centerX(), y, costPaint)
+            y += lineHeight
+        }
+
+        if (plan.showNext) {
+            y += lineHeight * StoreBackLayout.BLOCK_GAP
+            crystalDescPaint.textSize = StoreTextSizes.backNext(tileSize)
+            crystalDescPaint.color = 0xFFAAAAAA.toInt()
+            crystalDescPaint.alpha = a
+            for (line in nextLines) {
+                canvas.drawText("next $line", rect.centerX(), y, crystalDescPaint)
+                y += lineHeight
+            }
+        }
+
+        y += lineHeight * StoreBackLayout.BLOCK_GAP
+        crystalDescPaint.textSize = StoreTextSizes.backDetail(tileSize)
+        crystalDescPaint.color = 0xFFDDDDDD.toInt()
+        crystalDescPaint.alpha = a
+        for (line in detailLines) {
+            canvas.drawText(line, rect.centerX(), y, crystalDescPaint)
+            y += lineHeight * StoreBackLayout.DETAIL_LEADING
+        }
+
+        // The one thing that survives the flip. StoreBackLayout.BOTTOM_LIMIT is set to keep the
+        // content above this row, so it can be drawn last without measuring against it here.
+        drawCostRow(canvas, rect, level, maxLevel = 5, a = a, tileSize = tileSize)
+
+        tileBorderPaint.alpha = 255
+        textPaint.alpha = 255
+        costPaint.alpha = 255
+        crystalDescPaint.alpha = 255
+    }
+
+    /**
+     * Word wrap against a measured pixel width — the tile is a third of the screen.
+     *
+     * Two-line descriptions are balanced rather than greedy, so a card back never reads
+     * "Everything you fire hits" over a lone "harder." See [TextWrap].
+     */
+    private fun wrapToWidth(text: String, maxWidth: Float, paint: Paint): List<String> =
+        TextWrap.wrap(text, maxWidth, paint::measureText)
+
+    /**
+     * AGAIN, repeated until the tile is full.
+     *
+     * Plain `drawText` per row, clipped to the tile. The row is sized off the *narrowest* letter so
+     * it always over-runs the tile rather than leaving a ragged right edge, and the clip takes care
+     * of the overhang.
+     */
+    private fun drawCrystalBack(canvas: Canvas, rect: RectF, alpha: Float, tileSize: Float) {
+        val a = (255 * alpha).toInt().coerceIn(0, 255)
+
+        tileBorderPaint.color = CrystalPalette.MID
+        tileBorderPaint.alpha = a
+        canvas.drawRoundRect(rect, 6f, 6f, tileBorderPaint)
+
+        textPaint.textSize = (tileSize * 0.10f).coerceIn(8f, 14f)
+        textPaint.color = CrystalPalette.ICE
+        textPaint.alpha = a
+        textPaint.textAlign = Paint.Align.LEFT
+
+        val narrowest = textPaint.measureText("I").coerceAtLeast(1f)
+        val columns = (rect.width() / narrowest).toInt().coerceAtLeast(4)
+        val lineHeight = textPaint.textSize * 1.15f
+        val rows = ((rect.height() * 0.80f) / lineHeight).toInt().coerceAtLeast(4)
+        val line = CrystalCardBack.row(columns)
+
+        var y = rect.top + (rect.height() - rows * lineHeight) / 2f + lineHeight
+
+        canvas.save()
+        canvas.clipRect(rect)
+        repeat(rows) {
+            canvas.drawText(line, rect.left, y, textPaint)
+            y += lineHeight
+        }
+        canvas.restore()
+
+        // Reset before returning — textPaint and tileBorderPaint are shared across every tile in
+        // the grid; a leaked alpha or a left-behind LEFT align would dim or misalign whatever this
+        // frame draws with them next, same convention as drawUpgradeFront/drawUpgradeBack.
+        tileBorderPaint.alpha = 255
+        textPaint.alpha = 255
+        textPaint.textAlign = Paint.Align.CENTER
+    }
+
+    /**
+     * The shield's back exists to correct its own front.
+     *
+     * "Survive a lethal hit" reads as *fight on*, and that is not what happens: in Astro Loop mode
+     * `handlePlayerDeath` routes to `startRetreat()`, which sets health to 1, makes the ship
+     * invulnerable, flies it off the bottom of the screen and saves with `includeDeath = false`.
+     * The run ends — but the player leaves alive, keeps the takings, and no death is recorded.
+     *
+     * The first line is the paradox: in Astro Loop the boss ship never existed, because the crystal
+     * was never picked up. The plating is salvage from a branch that was erased, which plays
+     * against the Time Crystal's back three states earlier insisting it has already happened.
+     */
+    private fun drawShieldBack(canvas: Canvas, rect: RectF, alpha: Float, tileSize: Float) {
+        val a = (255 * alpha).toInt().coerceIn(0, 255)
+
+        tileBorderPaint.color = CrystalPalette.MID
+        tileBorderPaint.alpha = a
+        canvas.drawRoundRect(rect, 6f, 6f, tileBorderPaint)
+
+        // Same type scale as every other card back (StoreTextSizes), rather than a private set of
+        // fractions that ran a third smaller. This face was the only one in the grid the player
+        // had to lean in for.
+        textPaint.textSize = StoreTextSizes.backTitle(tileSize)
+        textPaint.color = CrystalPalette.ICE
+        textPaint.alpha = a
+        canvas.drawText("EMERGENCY SHIELD", rect.centerX(), rect.top + tileSize * 0.15f, textPaint)
+
+        // Status line — parallel to the green "EQUIPPED" the front shows, but styled like the
+        // front's own subtitle row (crystalDescPaint + CrystalPalette.DEEP, same as "Survive a
+        // lethal hit") rather than as body prose. The front's green is a purchase-affordance
+        // color used for MAX/EQUIPPED states elsewhere in this grid; the back never buys
+        // anything (design spec: "purchase stays a front-face gesture, and the back is purely
+        // for reading"), so reusing it here would borrow a vocabulary this face doesn't use.
+        // Sits in the gap already reserved between the title and the body start below — the
+        // body's own start position and rhythm are untouched by this line.
+        crystalDescPaint.textSize = StoreTextSizes.backDetail(tileSize)
+        crystalDescPaint.color = CrystalPalette.DEEP
+        crystalDescPaint.alpha = a
+        canvas.drawText("Always equipped", rect.centerX(), rect.top + tileSize * 0.27f, crystalDescPaint)
+
+        crystalDescPaint.textSize = StoreTextSizes.backDetail(tileSize)
+        crystalDescPaint.color = 0xFFDDDDDD.toInt()
+        crystalDescPaint.alpha = a
+
+        // Title 0.15, status 0.27, body 0.40 — the two gaps opened from 0.07/0.10 on 2026-08-11.
+        // They were set when this face ran 14px type; at the shared 22px they had the name, the
+        // status and the prose reading as one block.
+        var y = rect.top + tileSize * 0.40f
+        // Leading off the *type*, not the tile. As a tile fraction it collapsed on small screens:
+        // backDetail caps at 22px, so a 222px tile kept full-size text on 0.11 x 222 = 24px rows,
+        // and the descenders ran into the line below.
+        val lineHeight = StoreTextSizes.backDetail(tileSize) * SHIELD_BACK_LEADING
+        for (paragraph in SHIELD_BACK_BODY) {
+            if (paragraph.isEmpty()) { y += lineHeight * 0.5f; continue }
+            for (line in wrapToWidth(paragraph, rect.width() * 0.88f, crystalDescPaint)) {
+                canvas.drawText(line, rect.centerX(), y, crystalDescPaint)
+                y += lineHeight
+            }
+        }
+
+        // Reset before returning — same shared-Paint convention as drawCrystalBack above.
+        tileBorderPaint.alpha = 255
+        textPaint.alpha = 255
+        crystalDescPaint.alpha = 255
     }
 
     private fun drawStoreDecoration(canvas: Canvas) {
@@ -597,6 +912,68 @@ class StorePageRenderer(
 
     // Slot machine symbol IDs
     companion object {
+        /**
+         * The Emergency Shield's card back, in two paragraphs with a blank line between.
+         *
+         * **Shortened when the type grew.** This face used to set its body at `0.10f` of the tile
+         * capped at 14px while every other back used `backDetail`'s `0.16f` capped at 22px — the
+         * one card in the grid the player had to lean in for (owner, 2026-08-11). Matching the
+         * others costs roughly half again as much width per character, and S10 already had this
+         * back within about one line of clipping, so the copy came down 26% to pay for it.
+         *
+         * What survived the cut is what the card is for: the flavour line, and the correction to
+         * the front's "Survive a lethal hit" — which reads as *fight on*, where the code actually
+         * calls `startRetreat()` and the run ends with you alive. "Withdraw" is the game's own
+         * word for that.
+         *
+         * [SHIELD_BACK_BUDGET] guards the total; the device check is S10.
+         */
+        val SHIELD_BACK_BODY = listOf(
+            "Salvaged from a ship that never was.",
+            "",
+            "When the hull fails, you withdraw alive."
+        )
+
+        /**
+         * Baseline-to-baseline step on the shield's body, as a multiple of the **type size**.
+         *
+         * A multiple of the type rather than of the tile, which is what it used to be. `backDetail`
+         * caps at 22px, so on a 222px tile the old `0.11 × tileSize` gave 24px rows to 22px text
+         * and the descenders ran into the line below. Anchored to the type, the rows cannot
+         * collapse under it whatever the tile does.
+         */
+        const val SHIELD_BACK_LEADING = 1.25f
+
+        /**
+         * Total characters the shield back's body may carry.
+         *
+         * Calibrated for a real phone tile (~342px on a 1080-wide screen), where the body runs
+         * from `0.40` of the tile to the `0.94` floor: about 185px against a 27.5px step, so five
+         * wrapped lines plus the blank paragraph. 76 characters currently wraps to four there.
+         *
+         * **Small tiles are the open question, not this number.** The type is capped, so a narrow
+         * tile keeps 22px text in a narrower column: measured, 342px and 303px both wrap the copy
+         * to four lines and end at 0.76 and 0.81, while a 240px tile wraps the second paragraph to
+         * three, makes five, and runs to 1.03 — off the bottom. The turn is somewhere near 280px.
+         * It wants a look on the narrowest screen to hand; the lever if it clips is the copy, down
+         * 26% from where it started.
+         */
+        const val SHIELD_BACK_BUDGET = 80
+
+        /**
+         * The rising hold-to-buy fill: a deep, cool teal, deliberately not the store's amber.
+         *
+         * It has to be legible *through* — the tile's gold cost row and white name stay on top of
+         * it — so it darkens and cools rather than brightening. Warm or bright washes bleach the
+         * gold; this holds a visible waterline against the unfilled background while leaving text
+         * readable above and below it.
+         */
+        private val HOLD_FILL_COLOR = 0xFF2E7D8A.toInt()
+        /** Partial, so the tile beneath still reads as the tile. */
+        private const val HOLD_FILL_ALPHA = 150
+        /** The completion flash — brighter and lighter, held only for the exit fade. */
+        private val HOLD_FILL_FLASH_COLOR = 0xFF7FE3D4.toInt()
+
         const val SYM_YEN = 0
         const val SYM_STAR = 1
         const val SYM_DIAMOND = 2
@@ -816,7 +1193,23 @@ class StorePageRenderer(
         }
         val fadeDuration = 1000L
 
-        if (state.spinResultTime > 0 && resultAge < resultDuration) {
+        // Button feedback takes the readout outright. Drawn before the spin-result branch on
+        // purpose: the ordering IS the rule, so there is no condition to keep in sync.
+        val messageAge = time - state.readoutMessageTime
+        val message = state.readoutMessage
+        if (message != null && state.readoutMessageTime > 0 && messageAge < 3000L) {
+            val messageFade =
+                if (messageAge > 3000L - fadeDuration) ((3000L - messageAge) / fadeDuration.toFloat()) else 1f
+            textPaint.textSize = fontSize
+            // Unused elsewhere on this screen, where white means a good win, grey a poor one and
+            // pulsing gold a jackpot. This is the machine talking about itself, not an outcome —
+            // and it is the amber the buttons themselves are lit in.
+            textPaint.color = 0xFFCC8844.toInt()
+            textPaint.alpha = (messageFade * 255).toInt()
+            // No slot symbol, so the text is plainly centred and has the full box width.
+            canvas.drawText(message, resultRect.centerX(), resultRect.centerY() + fontSize * 0.15f, textPaint)
+            textPaint.alpha = 255
+        } else if (state.spinResultTime > 0 && resultAge < resultDuration) {
             val fadeAlpha = if (resultAge > resultDuration - fadeDuration) ((resultDuration - resultAge) / fadeDuration.toFloat()) else 1f
 
             if (state.spinResultUpgrade != null) {
@@ -1110,7 +1503,7 @@ class StorePageRenderer(
         )
 
         drawMuteButton(canvas, vibBtnCx, vibBtnCy, muteButtonRadius, state.vibrationMuted, isAudio = false)
-        drawMuteButton(canvas, audBtnCx, audBtnCy, muteButtonRadius, state.audioMuted, isAudio = true)
+        drawAudioButton(canvas, audBtnCx, audBtnCy, muteButtonRadius, state.audioMode)
 
         // Reset paint state
         textPaint.color = 0xFFFFFFFF.toInt()
@@ -1123,6 +1516,86 @@ class StorePageRenderer(
         bitmapPaint.alpha = if (spinning) 180 else 255
         canvas.drawBitmap(bitmap, null, RectF(cx - half, cy - half, cx + half, cy + half), bitmapPaint)
         bitmapPaint.alpha = 255
+    }
+
+    /**
+     * The audio button, which cycles four states rather than toggling two.
+     *
+     * One speaker cannot show two independent channels, so the speaker is the button and the two
+     * things around it are the channels: the **wave arc means music**, the **burst means effects**.
+     * Each is drawn only while that channel is audible, so all four states read as a distinct
+     * shape. The full strikethrough is reserved for silence, where it still means what it always
+     * meant.
+     *
+     * This is the part of the feature a device has to confirm. If the four states do not read at a
+     * glance, the agreed fallback is separate buttons rather than an ambiguous glyph —
+     * discoverability is already a theme of this release.
+     */
+    private fun drawAudioButton(canvas: Canvas, cx: Float, cy: Float, radius: Float, mode: AudioMode) {
+        val silent = mode.everythingSilenced
+        val fillPaint = Paint().apply { style = Paint.Style.FILL; isAntiAlias = true }
+        val linePaint = Paint().apply {
+            style = Paint.Style.STROKE; isAntiAlias = true; strokeWidth = 1.5f
+        }
+
+        fillPaint.color = if (silent) 0xFF0E0E1A.toInt() else 0xFF2A2018.toInt()
+        canvas.drawCircle(cx, cy, radius, fillPaint)
+        linePaint.color = if (silent) 0xFF2A2A3A.toInt() else 0xFFCC8844.toInt()
+        canvas.drawCircle(cx, cy, radius, linePaint)
+
+        val iconSize = radius * 0.85f
+        linePaint.color = if (silent) 0xFF444444.toInt() else 0xFFCC8844.toInt()
+        linePaint.strokeWidth = 2.5f
+
+        // Speaker body — always present, since the button is always the audio button.
+        val left = cx - iconSize * 0.5f
+        val right = cx + iconSize * 0.1f
+        val top = cy - iconSize * 0.3f
+        val bottom = cy + iconSize * 0.3f
+        canvas.drawRect(left, top + iconSize * 0.15f, left + iconSize * 0.25f, bottom - iconSize * 0.15f, linePaint)
+        val path = Path()
+        path.moveTo(left + iconSize * 0.25f, top + iconSize * 0.15f)
+        path.lineTo(right, top)
+        path.lineTo(right, bottom)
+        path.lineTo(left + iconSize * 0.25f, bottom - iconSize * 0.15f)
+        canvas.drawPath(path, linePaint)
+
+        // Wave arc — the music channel.
+        if (!mode.musicSilenced) {
+            val waveX = right + iconSize * 0.2f
+            canvas.drawArc(
+                RectF(waveX - iconSize * 0.2f, cy - iconSize * 0.25f,
+                      waveX + iconSize * 0.2f, cy + iconSize * 0.25f),
+                -45f, 90f, false, linePaint
+            )
+        }
+
+        // Burst — the effects channel: three short rays where the noise would be.
+        if (!mode.effectsSilenced) {
+            val burstX = right + iconSize * 0.55f
+            linePaint.strokeWidth = 2f
+            for (angleDeg in listOf(-40f, 0f, 40f)) {
+                val rad = Math.toRadians(angleDeg.toDouble())
+                val inner = iconSize * 0.12f
+                val outer = iconSize * 0.30f
+                canvas.drawLine(
+                    burstX + (cos(rad) * inner).toFloat(), cy + (sin(rad) * inner).toFloat(),
+                    burstX + (cos(rad) * outer).toFloat(), cy + (sin(rad) * outer).toFloat(),
+                    linePaint
+                )
+            }
+        }
+
+        // Strikethrough is reserved for actual silence.
+        if (silent) {
+            linePaint.color = 0xFFAA3333.toInt()
+            linePaint.strokeWidth = 3f
+            canvas.drawLine(
+                cx - radius * 0.6f, cy + radius * 0.6f,
+                cx + radius * 0.6f, cy - radius * 0.6f,
+                linePaint
+            )
+        }
     }
 
     private fun drawMuteButton(

@@ -55,15 +55,27 @@ class HangarRenderer(private val persistence: PersistenceManager) {
     private var ceilingY = 0f
 
     // --- Page sub-renderers ---
-    private val barPageRenderer = BarPageRenderer(textPaint, costPaint, persistence)
-    private val storePageRenderer = StorePageRenderer(persistence, textPaint, costPaint)
+    // internal, like storePageRenderer below: the test seam for rects that only a live Canvas
+    // pass would otherwise populate.
+    internal val barPageRenderer = BarPageRenderer(textPaint, costPaint, persistence)
+    // internal (not private): test seam, same convention as HangarSurfaceView's `state`/
+    // `renderer` — lets a test place spinButtonRect directly (it has no live Canvas draw pass to
+    // populate it under Robolectric; see StoreHoldSuppressesFlipTest's doc comment) without
+    // widening every individual sub-renderer property to a settable one.
+    internal val storePageRenderer = StorePageRenderer(persistence, textPaint, costPaint)
 
     // --- Tap rects (delegated to sub-renderers) ---
     val upgradeRects get() = storePageRenderer.upgradeRects
     val storeButtonRects get() = storePageRenderer.storeButtonRects
     val spinButtonRect get() = storePageRenderer.spinButtonRect
+    val crystalTileRect get() = storePageRenderer.crystalTileRect
     val codexBookRect get() = barPageRenderer.codexBookRect
     private val pilotCardRects get() = barPageRenderer.pilotCardRects
+
+    /** Delegates to [StorePageRenderer.isCrystalTileRevealed] — see there for the branch rules. */
+    fun isCrystalTileRevealed(persistence: PersistenceManager, state: HangarState): Boolean =
+        storePageRenderer.isCrystalTileRevealed(persistence, state)
+
     // --- Stars ---
     private data class HangarStar(val x: Float, val y: Float, val size: Float, val color: Int,
                                       val pulseSpeed: Float = 0f)  // 0 = static, >0 = pulsating

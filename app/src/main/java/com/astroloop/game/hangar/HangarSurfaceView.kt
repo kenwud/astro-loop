@@ -18,6 +18,7 @@ import com.astroloop.game.data.PersistenceManager
 import com.astroloop.game.data.PilotDefinitions
 import com.astroloop.game.data.TelemetryManager
 import com.astroloop.game.data.ShipDefinitions
+import com.astroloop.game.data.StoreUpgradeDefinitions
 import com.astroloop.game.render.CrystalOrbPath
 import com.astroloop.game.render.FontManager
 import com.astroloop.game.render.IconCache
@@ -30,12 +31,78 @@ class HangarSurfaceView(
 ) : SurfaceView(context), SurfaceHolder.Callback, Runnable {
 
     companion object {
+        /**
+         * Haptics, in one place so they can be tuned as a set rather than one call site at a time.
+         *
+         * Three strengths, and the distinction is what each one is *for*:
+         * - **Button tap** — a control acknowledging a press. Short and light, the feel of a small
+         *   physical button. Every button in the hangar gets this; card flips deliberately do not,
+         *   because a flip is reading rather than acting.
+         * - **Hold hum** — the store tile filling under a held finger. The only repeating one.
+         * - **Purchase knock** — money actually left the wallet. Upgrades and ships share it, so
+         *   a spend feels the same wherever it happens.
+         */
+        const val HAPTIC_BUTTON_MS = 12L
+        const val HAPTIC_BUTTON_AMPLITUDE = 70
+
+        /**
+         * Hold-fill pulse, on/off in milliseconds.
+         *
+         * The fill sweeps from `TAP_SECONDS` to the purchase — 750ms — so the period sets how many
+         * pulses that sweep contains. At the original 90/90 it was about four, which read as a slow
+         * tick running alongside the fill rather than as the tile charging. At 35/35 it is about
+         * eleven: fast enough to feel continuous, slow enough that the motor still articulates each
+         * pulse. This is the number to turn if it wants more or less urgency.
+         */
+        const val HAPTIC_HOLD_ON_MS = 35L
+        const val HAPTIC_HOLD_OFF_MS = 35L
+        const val HAPTIC_HOLD_AMPLITUDE = 22   // raised with the rate; short pulses read weaker
+
+        const val HAPTIC_PURCHASE_MS = 45L
+        const val HAPTIC_PURCHASE_AMPLITUDE = 110
+
+        /**
+         * The eight permanent store upgrades, in tile order, with the names the slot machine
+         * announces them by. One list rather than two parallel ones so a jackpot can name the
+         * upgrade at the reveal and grant that same upgrade when the reels stop.
+         */
+        val SLOT_UPGRADES: List<Pair<String, String>> = listOf(
+            "health" to "SALVAGE PLATE",
+            "shields" to "DEFLECTOR RIG",
+            "speed" to "NITRO BOOST",
+            "damage" to "HOT ROUNDS",
+            "crit" to "LUCKY ROUNDS",
+            "magnet" to "HAUL LINE",
+            "yen_bonus" to "FINDER'S FEE",
+            "salvage" to "SCAVENGER RIG"
+        )
+
+        fun upgradeDisplayName(id: String): String? =
+            SLOT_UPGRADES.firstOrNull { it.first == id }?.second
+
         // Pilot card flip (tap the selected portrait to read its passive).
         // The cycle is: FADE out the portrait, hold the passive face, FADE it back out.
         // So the passive is on screen for (DURATION - FADE) — keep that at the number
         // you actually want players to have for reading it.
         const val PILOT_FLIP_FADE = 0.225f      // one cross-fade leg
         const val PILOT_FLIP_DURATION = 2.225f  // → passive readable for 2.0s
+
+        // Store card flip (tap a tile to read its back). Same cycle as the pilot flip — FADE the
+        // front out, hold the back, FADE it out — but a stat block is a denser read than one line
+        // of passive text, so the back gets ~4s rather than 2s.
+        const val STORE_FLIP_FADE = 0.225f      // one cross-fade leg, matched to the pilot card
+        const val STORE_FLIP_DURATION = 4.225f  // → back readable for 4.0s
+
+        // Hold-to-buy fill exit. Nothing on screen may go without a visible exit, UI elements
+        // included, and HoldToBuy.advance() zeroes its own progress the instant it cancels or
+        // completes — without this the fill would snap to nothing on an early release, or never
+        // be seen at 100% before vanishing on a successful purchase. Short: it only covers the
+        // one-frame gap HoldToBuy leaves behind, not a deliberate animation beat of its own.
+        const val STORE_HOLD_EXIT_DURATION = 0.3f
+
+        // The Time Crystal tile — 9th tile, index 8, auto-equipped rather than purchased. Named
+        // here so later work (drawing its card back) can reference the tile without a bare 8.
+        const val CRYSTAL_TILE_INDEX = 8
     }
 
     private var gameThread: Thread? = null
@@ -43,8 +110,13 @@ class HangarSurfaceView(
 
     val persistence = PersistenceManager(context)
     private val telemetryManager = TelemetryManager(context)
-    private val state = HangarState(persistence)
-    private val renderer = HangarRenderer(persistence)
+    // internal (not private): the touch handlers can't be driven through real MotionEvent
+    // dispatch in a unit test — upgradeRects is only populated by a live Canvas draw pass, which
+    // Robolectric can't provide a valid Surface for. Tests inject a rect directly and call the
+    // handlers, which needs a way to read state/renderer back out. Same convention as
+    // HangarState's own `internal val persistence` and ChatSystem's internal test members.
+    internal val state = HangarState(persistence)
+    internal val renderer = HangarRenderer(persistence)
     private val chatSystem = ChatSystem()
 
     private var screenWidth = 0f
@@ -91,6 +163,18 @@ class HangarSurfaceView(
         context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
     }
     private var isVibratingHalo = false
+    private var isVibratingHold = false
+
+    /**
+     * The platform's own drag threshold, in real pixels for this screen's density (8dp).
+     *
+     * Read from ViewConfiguration rather than hard-coded so it means the same thing on a phone and
+     * a tablet. The previous 15f was raw pixels — roughly 5dp on a modern phone, tighter than
+     * Android's minimum for calling a movement a drag at all, which is why holding a store tile
+     * asked for more steadiness than it should have.
+     */
+    private val swipeSlop: Float =
+        android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private var isVibrationMuted: Boolean = context.getSharedPreferences("astrohunt_save", Context.MODE_PRIVATE)
         .getBoolean("vibration_muted", false)
 
@@ -101,10 +185,57 @@ class HangarSurfaceView(
     private var lastTouchY = 0f
     private var lastTouchTime: Long = 0
     private var isDragging = false
+    /**
+     * Set when a gesture is abandoned, and consumed by the ACTION_UP that may still follow.
+     *
+     * ACTION_CANCEL ends a gesture outright, but ACTION_POINTER_UP does not — the last finger
+     * lifting still delivers an ACTION_UP. Abandoning clears [isDragging], so without this flag
+     * that release would take the `!isDragging` branch and be dispatched as a *tap*, turning a
+     * deliberate drag into a press. In this hangar a press buys things: on the shipyard it can
+     * unlock a ship outright for up to ¥100,000 with no confirmation.
+     */
+    private var gestureAbandoned = false
     private var activeSwipe: SwipeTarget = SwipeTarget.NONE
     private var shipDragPossible = false
-    private var spinButtonHeld = false
+    // internal (not private): test seam, same convention as heldUpgradeIndex below — lets a test
+    // confirm the spin button was (or wasn't) grabbed from ACTION_DOWN without a live draw pass.
+    internal var spinButtonHeld = false
     private var stateInitialized = false
+    /**
+     * internal (not private): test seam, same convention as [heldUpgradeIndex] below.
+     *
+     * The clock is normally ticked by `updateBrowsing` on the render thread, which a unit test has
+     * no way to run — so without this a test could dispatch a press and a release but never age the
+     * press in between, which is precisely the distinction the release path now turns on.
+     */
+    internal val storeHold = HoldToBuy()
+    /**
+     * Which tile the in-flight hold belongs to; survives HoldToBuy going idle on completion.
+     *
+     * internal (not private): test seam, same convention as state/renderer above — lets a test
+     * confirm whether ACTION_DOWN started a hold without driving the render thread's update loop,
+     * which is the only other place this is otherwise read.
+     */
+    internal var heldUpgradeIndex = -1
+    /**
+     * Seconds left in the hold-fill's exit fade — a completion flash on a finished purchase, a
+     * plain fade on an early release or cancel. Lives here rather than in [HoldToBuy] because it
+     * is a rendering concern, not part of the buy/no-buy decision; [HangarState]'s
+     * `storeHoldExit*` fields are what the renderer actually reads, mirrored from this each frame
+     * the same way `storeHoldIndex`/`storeHoldProgress` mirror [storeHold] itself.
+     *
+     * `@Volatile` because it is armed on the UI thread (via touch handling and `surfaceDestroyed`)
+     * and decayed on the game thread. A missed write would leave the decay block never running and
+     * `storeHoldExitAlpha` stuck at 1f — a fill drawn on a tile nobody is touching.
+     */
+    @Volatile private var storeHoldExitTimer = 0f
+    /**
+     * Tile a completed hold just bought. The finger is still down when a hold completes, so the
+     * ACTION_UP that follows falls through to handleStoreTap on that same tile — this tells that
+     * call to skip the flip exactly once. Consumed (cleared) the moment it's checked, so it can
+     * never leak into a later, genuine tap on the same tile.
+     */
+    private var suppressFlipIndex = -1
 
     private enum class SwipeTarget { NONE, PAGE, SHIP_DRAG }
 
@@ -152,7 +283,7 @@ class HangarSurfaceView(
             state.initialize()
             stateInitialized = true
         }
-        SoundManager.setMuted(state.audioMuted)
+        SoundManager.applyAudioMode(state.audioMode)
         isVibrationMuted = state.vibrationMuted
         initShipPositions()
 
@@ -223,6 +354,12 @@ class HangarSurfaceView(
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         stopHaloRumble()
+        stopHoldRumble()
+        // A hold or a held spin button otherwise survives the surface being destroyed: this only
+        // stops the render thread, so on resume the retained elapsed/held state would pick right
+        // back up and a purchase (or an auto-spin) could fire with no finger on screen.
+        cancelHold()
+        spinButtonHeld = false
         running = false
         gameThread?.join()
     }
@@ -372,31 +509,7 @@ class HangarSurfaceView(
         // Update slot machine animation
         if (state.isSpinning) {
             val now = System.currentTimeMillis()
-            if (now >= state.reelStopTimes[2]) {
-                // All reels stopped — apply payout
-                state.isSpinning = false
-                state.spinResultTime = now
-                // Jackpot sound when all three reels show rockets
-                if (state.reelValues[0] == StorePageRenderer.SYM_ROCKET &&
-                    state.reelValues[1] == StorePageRenderer.SYM_ROCKET &&
-                    state.reelValues[2] == StorePageRenderer.SYM_ROCKET) {
-                    SoundManager.playSFX("sfx_slot_jackpot")
-                    spinButtonHeld = false  // Let jackpot animation play before resuming auto-spin
-                }
-                if (state.spinResultYen > 0) {
-                    // Non-jackpot win sound
-                    if (!(state.reelValues[0] == StorePageRenderer.SYM_ROCKET &&
-                          state.reelValues[1] == StorePageRenderer.SYM_ROCKET &&
-                          state.reelValues[2] == StorePageRenderer.SYM_ROCKET)) {
-                        SoundManager.playSFX("sfx_slot_win")
-                    }
-                    synchronized(upgradeLock) {
-                        val newYen = state.actualYen + state.spinResultYen
-                        persistence.setYen(newYen)
-                        state.actualYen = newYen
-                    }
-                }
-            }
+            if (now >= state.reelStopTimes[2]) completeSpin(now)
         }
 
         // Auto-spin when holding the spin button (disabled after jackpot)
@@ -419,7 +532,11 @@ class HangarSurfaceView(
             }
         }
 
-        // Pilot card fade — selected card full opacity, others dim to 35%
+        // Pilot card fade — selected card full opacity, every other card dims to 35% whether it is
+        // locked or not. The next recruit's card briefly had a brighter floor here to rescue its
+        // silhouette, which made it outshine an unlocked crewmate sitting next to it: with MEDIC
+        // selected, the locked BRUTUS read as more prominent than the recruited RASCAL. A locked
+        // card differs by what it contains, not by how brightly the grid draws it.
         val lerpSpeed = 16f * deltaTime
         for (i in state.pilotCardFades.indices) {
             val target = if (i == state.selectedPilotIndex) 1f else 0.35f
@@ -443,6 +560,38 @@ class HangarSurfaceView(
                     state.pilotFlipTimer < PILOT_FLIP_FADE -> state.pilotFlipTimer / PILOT_FLIP_FADE  // fading in: 0→1
                     else -> 1f                                                            // back fully visible
                 }
+            }
+        }
+
+        // Store card flips — same cycle as the pilot flip above, its own duration, and one clock
+        // per tile so turning over a second card leaves the first one turned over.
+        state.advanceStoreFlips(deltaTime)
+        state.advanceHintNoteReveal(deltaTime)
+
+        // Hold-to-buy clock. Completing buys exactly one level; the machine goes idle on its own.
+        if (storeHold.advance(deltaTime)) {
+            // HoldToBuy.advance() has already reset its own progress to 0 by the time it returns
+            // true, so without capturing the completed index first and freezing the fill full,
+            // the bar would never be seen at 100% — it would just disappear.
+            // The success flash is armed before the purchase runs, so it depends on canStartHold()
+            // having already refused holds on maxed and unaffordable tiles. If those guards ever
+            // move or loosen, a declined purchase would flash as though it had succeeded.
+            beginHoldExit(heldUpgradeIndex, progress = 1f, success = true)
+            purchaseHeldUpgrade(heldUpgradeIndex)
+            stopHoldRumble()
+            purchasePulse()
+        }
+        // The hum tracks the fill exactly — see HoldToBuy.isFilling.
+        if (storeHold.isFilling) startHoldRumble() else stopHoldRumble()
+        state.storeHoldIndex = storeHold.index
+        state.storeHoldProgress = storeHold.progress
+
+        // Decay the hold-fill's exit — a completion flash or an early-release fade, never a snap.
+        if (storeHoldExitTimer > 0f) {
+            storeHoldExitTimer = (storeHoldExitTimer - deltaTime).coerceAtLeast(0f)
+            state.storeHoldExitAlpha = (storeHoldExitTimer / STORE_HOLD_EXIT_DURATION).coerceIn(0f, 1f)
+            if (storeHoldExitTimer <= 0f) {
+                state.storeHoldExitIndex = -1
             }
         }
 
@@ -602,6 +751,7 @@ class HangarSurfaceView(
                 lastTouchY = ey
                 lastTouchTime = event.eventTime
                 isDragging = false
+                gestureAbandoned = false
                 activeSwipe = SwipeTarget.NONE
                 shipDragPossible = false
 
@@ -627,6 +777,29 @@ class HangarSurfaceView(
                     // release against another.
                     if (state.currentPage == 2 && renderer.spinButtonRect.contains(roomX(ex), ey)) {
                         spinButtonHeld = true
+                        // Press only. Auto-spin re-enters handleSlotSpin from updateBrowsing while
+                        // the finger stays down, and a tap per spin would turn a held button into a
+                        // continuous rattle.
+                        buttonTap()
+                    }
+                    // Store tiles: the press starts a hold. Resolve against the rest position for
+                    // the same reason the spin button does — DOWN and UP must agree on the offset
+                    // or a press during a post-swipe settle hits a different tile than it releases
+                    // on. Release under the threshold falls through to handleStoreTap as a tap.
+                    if (state.currentPage == 2) {
+                        val rx = roomX(ex)
+                        for ((index, rect) in renderer.upgradeRects.withIndex()) {
+                            if (rect.contains(rx, ey)) {
+                                // Maxed and unaffordable tiles start no fill at all — the press
+                                // falls through to a plain tap on release instead, which flips
+                                // the card, and the card is what explains the cost or the cap.
+                                if (canStartHold(index)) {
+                                    storeHold.start(index)
+                                    heldUpgradeIndex = index
+                                }
+                                break
+                            }
+                        }
                     }
                 }
                 return true
@@ -637,15 +810,27 @@ class HangarSurfaceView(
                         val totalDx = abs(ex - touchStartX)
                         val totalDy = abs(ey - touchStartY)
 
-                        if (totalDx > 15f || totalDy > 15f) {
+                        // Slop comes from the platform so it scales with the screen — see
+                        // HangarGestures for why the old raw 15f was the wrong shape entirely.
+                        val shipDrag = HangarGestures.startsShipDrag(
+                            totalDx, totalDy, swipeSlop, shipDragPossible)
+                        val pageSwipe = HangarGestures.startsPageSwipe(totalDx, totalDy, swipeSlop)
+
+                        if (shipDrag || pageSwipe) {
+                            // A swipe is not a hold. Note this is now reached only by a gesture the
+                            // page can actually perform: vertical drift on the store page commits
+                            // to nothing and leaves the fill running.
+                            cancelHold()
                             isDragging = true
-                            if (shipDragPossible && totalDy > totalDx) {
-                                // Vertical drag on ship → ship drag
-                                activeSwipe = SwipeTarget.SHIP_DRAG
-                                state.isDraggingShip = true
-                            } else {
-                                // Horizontal movement or not on ship → page swipe
-                                activeSwipe = SwipeTarget.PAGE
+                            activeSwipe = if (shipDrag) SwipeTarget.SHIP_DRAG else SwipeTarget.PAGE
+                            if (shipDrag) state.isDraggingShip = true
+                        } else if (storeHold.isActive) {
+                            // Drift within the tile is free; leaving it is letting go of the
+                            // button, which is what every platform control does.
+                            val rect = renderer.upgradeRects.getOrNull(storeHold.index)
+                            if (rect != null && !HangarGestures.holdSurvivesDrift(
+                                    roomX(ex), ey, rect.left, rect.top, rect.right, rect.bottom)) {
+                                cancelHold()
                             }
                         }
                     }
@@ -690,7 +875,16 @@ class HangarSurfaceView(
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                if (!isDragging) {
+                // A press that outlived the tap window was an upgrade being started, not a tap.
+                // Releasing it abandons the purchase and must NOT fall through to a flip: treating
+                // the two as one event is exactly what made holding-then-letting-go still turn the
+                // card over. The tail below cancels the hold, which arms the fill's fade, so the
+                // player sees the attempt end rather than nothing happening.
+                val abandonedPurchase = storeHold.isActive && !HoldToBuy.isTap(storeHold.heldSeconds)
+
+                // gestureAbandoned, not just isDragging: an abandoned gesture has already cleared
+                // isDragging, and without this it would be dispatched below as a tap.
+                if (!isDragging && !gestureAbandoned && !abandonedPurchase) {
                     // Reset scroll offsets to prevent jitter on tap
                     if (shipDragPossible) {
                         // Was a tap on ship, not a drag — don't reset page scroll
@@ -758,13 +952,108 @@ class HangarSurfaceView(
                 }
 
                 isDragging = false
+                gestureAbandoned = false
                 activeSwipe = SwipeTarget.NONE
                 shipDragPossible = false
                 spinButtonHeld = false
+                cancelHold()
+                // Safety net: the tile-match branch in handleStoreTap already consumes this on a
+                // matching release, but a release that lands off every rect (or a drag that
+                // starts only after a hold completed) would otherwise leave it set for a later,
+                // unrelated tap on the same tile to consume instead.
+                suppressFlipIndex = -1
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                // The OS can deliver CANCEL instead of UP mid-hold (a parent intercepting the
+                // gesture, e.g.). Mirrors the ACTION_UP tail's resets, minus the tap dispatch —
+                // a cancel must never buy or flip anything — plus the ACTION_UP SHIP_DRAG release
+                // branch's stopHaloRumble()/isDraggingShip reset just above, which this needs too:
+                // a cancel mid ship-drag is a release that skips the launch check, not a no-op.
+                // Without both halves, the snap-back animation (gated on !isDraggingShip) never
+                // fires, the ship hangs in mid-air, and the halo check keeps re-arming the rumble
+                // — the phone vibrates continuously until the player drags the ship again.
+                abandonGesture()
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                // A second finger touching down anywhere mid-gesture, then the first lifting,
+                // delivers POINTER_UP rather than UP or CANCEL. This view tracks one logical
+                // touch, so — same as CANCEL — treat any additional-finger transition as an
+                // abandon rather than let a hold's clock keep ticking with only a phantom finger
+                // on the tile it started on, which could otherwise complete a purchase (or a ship
+                // launch) the player never asked for.
+                abandonGesture()
                 return true
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    /**
+     * Reset every gesture-tracking field with no purchase, no launch, no flip — shared by
+     * ACTION_CANCEL and ACTION_POINTER_UP, both of which must abandon whatever is in flight
+     * rather than complete it. Mirrors the ACTION_UP tail's resets, plus the ACTION_UP SHIP_DRAG
+     * release branch's stopHaloRumble()/isDraggingShip reset, minus the tap dispatch and the
+     * launch check — an abandoned gesture must never buy, launch, or flip anything.
+     */
+    private fun abandonGesture() {
+        cancelHold()
+        suppressFlipIndex = -1
+        gestureAbandoned = true
+        isDragging = false
+        activeSwipe = SwipeTarget.NONE
+        shipDragPossible = false
+        spinButtonHeld = false
+        stopHaloRumble()
+        stopHoldRumble()
+        state.isDraggingShip = false
+    }
+
+    /**
+     * Abandon the in-flight hold with no purchase. Every release path — a plain release, a
+     * drag past slop, [abandonGesture], and the surface being destroyed — funnels through here
+     * so the fill's exit fade starts from whatever width it had actually reached, rather than
+     * each call site reimplementing "was there even a hold to cancel".
+     */
+    private fun cancelHold() {
+        if (storeHold.isActive) {
+            beginHoldExit(storeHold.index, storeHold.progress, success = false)
+        }
+        storeHold.cancel()
+        heldUpgradeIndex = -1
+    }
+
+    /**
+     * Whether tile [index] can still be bought — a maxed or unaffordable tile starts no fill.
+     * The designed behaviour: maxed, unaffordable and the NG+ tile start no fill at all, and
+     * tapping still flips them — a press that cannot buy falls through to a plain tap. The NG+
+     * tile never reaches this — it is tracked separately as `crystalTileRect` and is never in
+     * `renderer.upgradeRects` — so this only needs the same guards `handleUpgradeTap` applies at
+     * purchase time, checked here too so a hold never starts on a tile it cannot complete.
+     */
+    private fun canStartHold(index: Int): Boolean {
+        val ids = StoreUpgradeDefinitions.purchasableIds
+        if (index !in ids.indices) return false
+        val currentLevel = persistence.getUpgradeLevel(ids[index])
+        if (currentLevel >= 5) return false
+        return state.actualYen >= PersistenceManager.getUpgradeCost(currentLevel)
+    }
+
+    /**
+     * Start the hold-fill's exit, so it is never seen to vanish. [progress] is the
+     * width the fade holds through its decay: 1f (full) on a completed purchase, whatever the
+     * fill had actually reached on an early release or a cancel. [success] tints the exit as a
+     * brief completion flash rather than a plain fade. A no-op below zero width — nothing was
+     * ever visible, so there is nothing to fade.
+     */
+    private fun beginHoldExit(index: Int, progress: Float, success: Boolean) {
+        if (index < 0 || progress <= 0f) return
+        state.storeHoldExitIndex = index
+        state.storeHoldExitProgress = progress
+        state.storeHoldExitAlpha = 1f
+        state.storeHoldExitSuccess = success
+        storeHoldExitTimer = STORE_HOLD_EXIT_DURATION
     }
 
     /**
@@ -827,30 +1116,24 @@ class HangarSurfaceView(
         state.setPageTarget(targetPage)
     }
 
-    private fun handleBarTap(x: Float, y: Float) {
+    internal fun handleBarTap(x: Float, y: Float) {
         SoundManager.playSFX("sfx_ui_tap")
 
         // The bar page draws — and publishes its rects — in room-local space.
         val rx = roomX(x)
 
-        // Codex book on bar counter
-        if (renderer.codexBookRect.contains(rx, y)) {
-            if (persistence.getDiscoveredEvolutions().isNotEmpty()) {
-                state.phase = HangarPhase.CODEX
-            }
-            return
-        }
+        // The codex book on the counter is set dressing only. The maintenance hatch on the slot
+        // machine is the one way in (owner, 2026-08-10) — it is the secret the bar's own hints
+        // point at, and a second door on the counter gave it away.
 
         val pilotIndex = renderer.getPilotGridIndex(rx, y)
         if (pilotIndex != null) {
             val pilot = PilotDefinitions.getPilotByIndex(pilotIndex)
             if (pilot != null && state.isPilotUnlocked(pilotIndex)) {
                 if (pilotIndex == state.selectedPilotIndex) {
-                    // Already selected — fade card to show passive effect
-                    state.pilotFlipIndex = pilotIndex
-                    state.pilotFlipTimer = PILOT_FLIP_DURATION
-                    state.pilotFlipProgress = 1f       // start from fully visible; was 0f which caused 1-frame invisible flash
-                    state.pilotFlipShowBack = false    // reset if re-tapping while back face is displayed
+                    // Already selected — turn the card over to show the passive, or turn it back
+                    // if it is already over. A second tap means "put it back", same as the store.
+                    state.togglePilotFlip(pilotIndex)
                 } else {
                     selectPilotAndStartWalk(pilotIndex)
                 }
@@ -913,16 +1196,21 @@ class HangarSurfaceView(
             val currentPos = visibleShips.indexOf(state.selectedShipIndex)
                 .let { if (it < 0) 0 else it }
 
-            // Tap left peek ship
+            // Tap left/right peek ship to swap. Both get the button tap: moving the carousel is a
+            // control answering a press, same as the spin or audio buttons, and it feels the same
+            // whether the ship you land on is owned or still locked — the swap happened either
+            // way. Fired inside the guards, so a tap at either end of the list, where nothing
+            // moves, stays silent.
             if (x < centerX - shipHitSize && currentPos > 0) {
                 state.shipScrollOffset = -spacing
                 state.selectedShipIndex = visibleShips[currentPos - 1]
+                buttonTap()
                 return
             }
-            // Tap right peek ship
             if (x > centerX + shipHitSize && currentPos < visibleShips.size - 1) {
                 state.shipScrollOffset = spacing
                 state.selectedShipIndex = visibleShips[currentPos + 1]
+                buttonTap()
                 return
             }
             // Tap center ship (purchase)
@@ -936,6 +1224,9 @@ class HangarSurfaceView(
                         state.actualYen = persistence.getYen()
                         telemetryManager.logPurchase("ship_purchase", ship.id, 0, ship.cost, state.actualYen)
                         SoundManager.playSFX("sfx_ui_purchase")
+                        // The same knock a held upgrade gives. The gesture differs — the shipyard
+                        // buys on a tap — but what happened to the wallet does not.
+                        purchasePulse()
                     }
                 }
                 return
@@ -943,17 +1234,25 @@ class HangarSurfaceView(
         }
     }
 
-    private fun handleStoreTap(x: Float, y: Float) {
+    // internal: see the comment on `state`/`renderer` above — this is the test seam for the
+    // suppression decision StoreHoldSuppressesFlipTest exercises.
+    internal fun handleStoreTap(x: Float, y: Float) {
         // The shop page draws — and publishes its rects — in room-local space.
         val rx = roomX(x)
 
         // Mute toggle buttons (checked before generic tap sound)
         val audioRect = state.audioMuteButtonRect
         if (audioRect != null && audioRect.contains(rx, y)) {
-            state.audioMuted = !state.audioMuted
-            persistence.setAudioMuted(state.audioMuted)
-            SoundManager.setMuted(state.audioMuted)
-            if (!state.audioMuted) SoundManager.playSFX("sfx_ui_tap")
+            // One button, four states: all → none → combat muted → music muted → all.
+            state.audioMode = state.audioMode.next()
+            persistence.setAudioMode(state.audioMode)
+            SoundManager.applyAudioMode(state.audioMode)
+            state.showReadoutMessage(state.audioMode.readoutLabel)
+            // The confirmation tap is an effect like any other, so it simply goes quiet in the
+            // states that silence effects. No guard needed: silence confirms itself by being silent.
+            SoundManager.playSFX("sfx_ui_tap")
+            // The haptic is the reason this button still answers in the states that silence it.
+            buttonTap()
             return
         }
 
@@ -962,11 +1261,13 @@ class HangarSurfaceView(
             state.vibrationMuted = !state.vibrationMuted
             persistence.setVibrationMuted(state.vibrationMuted)
             isVibrationMuted = state.vibrationMuted
+            state.showReadoutMessage(if (state.vibrationMuted) "VIBRATE OFF" else "VIBRATE ON")
             SoundManager.playSFX("sfx_ui_tap")
-            if (!state.vibrationMuted) {
-                // Gentle confirmation tap when re-enabling vibration
-                vibrator.vibrate(VibrationEffect.createOneShot(30, 40))
-            }
+            // Only on the way back on. Turning vibration off and then buzzing to confirm it would
+            // be the button disobeying itself; `buttonTap` would no-op anyway, since
+            // isVibrationMuted is already updated above, but the intent is worth being explicit
+            // about. This is the one button whose haptic is conditional.
+            if (!state.vibrationMuted) buttonTap()
             return
         }
 
@@ -995,10 +1296,32 @@ class HangarSurfaceView(
 
         for ((index, rect) in renderer.upgradeRects.withIndex()) {
             if (rect.contains(rx, y)) {
-                handleUpgradeTap(index)
+                // Tap reads, hold buys — but the finger is still down when a hold completes, so
+                // the release that follows lands here on the very tile that was just bought.
+                // suppressFlipIndex is consumed on read so it can't leak into a later, genuine
+                // tap on the same tile. The unconditional sfx_ui_tap near the top of this
+                // function already covers this call; no second play here.
+                if (suppressFlipIndex == index) {
+                    suppressFlipIndex = -1
+                    return
+                }
+                state.toggleStoreCard(index, STORE_FLIP_DURATION)
                 return
             }
         }
+
+        // Tile 9 is deliberately absent from upgradeRects — it is tracked separately and cannot be
+        // bought in any of its four states, which is what makes "not purchasable" structural rather
+        // than a guard someone can delete. Only its two live faces turn over; both "?" states do
+        // nothing, because the source requires the two mystery branches stay identical.
+        // No second sfx_ui_tap here — same as the upgradeRects loop above, the unconditional play
+        // near the top of this function already covers every tap that reaches this point.
+        val crystalRect = renderer.crystalTileRect
+        if (crystalRect.contains(rx, y) && renderer.isCrystalTileRevealed(persistence, state)) {
+            state.toggleStoreCard(CRYSTAL_TILE_INDEX, STORE_FLIP_DURATION)
+            return
+        }
+
         // Slot machine spin button
         if (renderer.spinButtonRect.contains(rx, y)) {
             handleSlotSpin()
@@ -1006,7 +1329,46 @@ class HangarSurfaceView(
         }
     }
 
-    private fun handleSlotSpin() {
+    /**
+     * The reels have all stopped: reveal the result and pay it out.
+     *
+     * internal: the test seam for the deferred payout. Everything the player is owed by a spin
+     * lands here rather than at roll time, so the reels are never showing one thing while the
+     * save already holds another.
+     */
+    internal fun completeSpin(now: Long) {
+        state.isSpinning = false
+        state.spinResultTime = now
+        val isJackpot = state.reelValues[0] == StorePageRenderer.SYM_ROCKET &&
+            state.reelValues[1] == StorePageRenderer.SYM_ROCKET &&
+            state.reelValues[2] == StorePageRenderer.SYM_ROCKET
+        if (isJackpot) {
+            SoundManager.playSFX("sfx_slot_jackpot")
+            spinButtonHeld = false  // Let jackpot animation play before resuming auto-spin
+        }
+        // The free upgrade the jackpot promised at roll time, handed over now the reels have
+        // shown it. Read-to-clear so a later spin can never re-grant it.
+        state.pendingSpinUpgradeId?.let { id ->
+            state.pendingSpinUpgradeId = null
+            synchronized(upgradeLock) {
+                persistence.setUpgradeLevel(id, persistence.getUpgradeLevel(id) + 1)
+            }
+        }
+        if (state.spinResultYen > 0) {
+            if (!isJackpot) SoundManager.playSFX("sfx_slot_win")
+            synchronized(upgradeLock) {
+                val newYen = state.actualYen + state.spinResultYen
+                persistence.setYen(newYen)
+                state.actualYen = newYen
+            }
+        }
+    }
+
+    /**
+     * @param roll the outcome draw. internal with a default so a test can force a jackpot
+     *   without spinning until one turns up.
+     */
+    internal fun handleSlotSpin(roll: Float = kotlin.random.Random.nextFloat()) {
         if (state.isSpinning) return
         if (state.actualYen < 100) return
 
@@ -1018,8 +1380,6 @@ class HangarSurfaceView(
             state.actualYen = newYen
         }
 
-        // Roll outcome
-        val roll = kotlin.random.Random.nextFloat()
         var outcome: Triple<Int, Int, String?> = Triple(-1, 0, null) // default: loss
         val rascalRigged = StoryStateManager.hasLoopedBefore(persistence)
                 && persistence.isPilotUnlocked("pilot_rascal")
@@ -1042,9 +1402,10 @@ class HangarSurfaceView(
         if (!isCorrupted) when {
             roll < jackpotThreshold -> {
                 // Jackpot — free random upgrade or 10k yen
-                val upgradeResult = tryGrantRandomUpgrade()
-                if (upgradeResult != null) {
-                    outcome = Triple(StorePageRenderer.SYM_ROCKET, 0, upgradeResult)
+                val chosen = chooseRandomUpgrade()
+                if (chosen != null) {
+                    state.pendingSpinUpgradeId = chosen.first
+                    outcome = Triple(StorePageRenderer.SYM_ROCKET, 0, chosen.second)
                 } else {
                     outcome = Triple(StorePageRenderer.SYM_ROCKET, 10000, null)
                 }
@@ -1111,24 +1472,40 @@ class HangarSurfaceView(
         telemetryManager.logCasinoSpin(symbolNames, yenPayout, state.actualYen)
     }
 
-    private fun tryGrantRandomUpgrade(): String? {
-        val upgradeIds = listOf("health", "shields", "speed", "damage", "crit", "magnet", "yen_bonus", "salvage")
-        val upgradeNames = listOf("SALVAGE PLATE", "DEFLECTOR RIG", "NITRO BOOST", "HOT ROUNDS", "LUCKY ROUNDS", "HAUL LINE", "FINDER'S FEE", "SCAVENGER RIG")
-        val nonMaxed = mutableListOf<Int>()
-        for (i in upgradeIds.indices) {
-            if (persistence.getUpgradeLevel(upgradeIds[i]) < 5) {
-                nonMaxed.add(i)
-            }
-        }
+    /**
+     * Pick the upgrade a jackpot will hand over, or null if all eight are maxed.
+     *
+     * Chooses only — `completeSpin` does the granting. A jackpot that picked *and* wrote here
+     * would raise the tile's level while the reels were still turning, which is the machine
+     * answering before it has finished asking.
+     */
+    private fun chooseRandomUpgrade(): Pair<String, String>? {
+        val nonMaxed = SLOT_UPGRADES.filter { persistence.getUpgradeLevel(it.first) < 5 }
         if (nonMaxed.isEmpty()) return null
-        val chosen = nonMaxed[kotlin.random.Random.nextInt(nonMaxed.size)]
-        val id = upgradeIds[chosen]
-        val currentLevel = persistence.getUpgradeLevel(id)
-        persistence.setUpgradeLevel(id, currentLevel + 1)
-        return upgradeNames[chosen]
+        return nonMaxed[kotlin.random.Random.nextInt(nonMaxed.size)]
     }
 
     private val upgradeLock = Any()
+
+    /**
+     * Buy one level of [index], the completion of a hold.
+     *
+     * `handleUpgradeTap` keeps the money handling it always had, including the maxed and
+     * unaffordable guards, so a completed hold on a tile that cannot be bought is silently free.
+     *
+     * internal: see the comment on `state`/`renderer` above — this is the test seam for the
+     * suppression decision StoreHoldSuppressesFlipTest exercises.
+     */
+    internal fun purchaseHeldUpgrade(index: Int) {
+        if (index < 0) return
+        handleUpgradeTap(index)
+        // The finger is still down here — the ACTION_UP that follows falls through to
+        // handleStoreTap on this same tile, since the press never crossed the drag slop. Record
+        // it unconditionally (even if handleUpgradeTap's guards silently declined the purchase):
+        // a completed 0.5s hold is not a tap either way, so its release must not flip the tile.
+        suppressFlipIndex = index
+        heldUpgradeIndex = -1
+    }
 
     private fun handleUpgradeTap(index: Int) {
         val upgradeIds = listOf("health", "shields", "speed", "damage", "crit", "magnet", "yen_bonus", "salvage")
@@ -1177,6 +1554,67 @@ class HangarSurfaceView(
         vibrator.cancel()
     }
 
+    /**
+     * The hum under a filling store tile — deliberately fainter than the halo rumble.
+     *
+     * The halo announces a thing you have found; this one only confirms a thing you are already
+     * watching happen, and it sits under a thumb resting on the tile for a full second. Amplitude
+     * 18 against the halo's 40, and a slow 90/90 pulse rather than the halo's 50/50 flutter, so it
+     * reads as the tile charging rather than as an alert.
+     */
+    private fun startHoldRumble() {
+        if (isVibrationMuted) return
+        if (isVibratingHold) return
+        isVibratingHold = true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createWaveform(
+                longArrayOf(0, HAPTIC_HOLD_ON_MS, HAPTIC_HOLD_OFF_MS),
+                intArrayOf(0, HAPTIC_HOLD_AMPLITUDE, 0), 0
+            ))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(longArrayOf(0, HAPTIC_HOLD_ON_MS, HAPTIC_HOLD_OFF_MS), 0)
+        }
+    }
+
+    /**
+     * A control acknowledging a press — the feel of a small physical button.
+     *
+     * Deliberately not wired to the pilot or store card flips: turning a card over is reading, not
+     * acting on anything, and a buzz on every browse would wear the gesture out.
+     */
+    private fun buttonTap() {
+        if (isVibrationMuted) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createOneShot(HAPTIC_BUTTON_MS, HAPTIC_BUTTON_AMPLITUDE))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(HAPTIC_BUTTON_MS)
+        }
+    }
+
+    private fun stopHoldRumble() {
+        if (!isVibratingHold) return
+        isVibratingHold = false
+        vibrator.cancel()
+    }
+
+    /**
+     * Money left the wallet: one short, definite knock, clearly above the hum it replaces.
+     *
+     * Shared by upgrades and ships, so a spend feels the same wherever the player makes it — the
+     * shipyard buys on a tap rather than a hold, but the thing that happened is identical.
+     */
+    private fun purchasePulse() {
+        if (isVibrationMuted) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createOneShot(HAPTIC_PURCHASE_MS, HAPTIC_PURCHASE_AMPLITUDE))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(HAPTIC_PURCHASE_MS)
+        }
+    }
+
     private fun checkPilotRecruitment() {
         if (state.checkPilotUnlockCondition()) {
             val pilot = state.recruitNextPilot()
@@ -1200,6 +1638,7 @@ class HangarSurfaceView(
 
     fun pause() {
         stopHaloRumble()
+        stopHoldRumble()
         running = false
         gameThread?.join()
     }
@@ -1213,7 +1652,10 @@ class HangarSurfaceView(
     }
 
     fun addYenFromRun(amount: Int) {
-        persistence.addYen(amount)
+        // The payout is already banked — MainActivity credits it on the game thread before
+        // handing back here, so a failure during the return cannot cost the player the run.
+        // This only syncs the display, which is what drives the count-up: displayedYen still
+        // holds the pre-run balance, and updateYenDisplay lerps it up to actualYen over 3s.
         state.actualYen = persistence.getYen()
         persistence.incrementRunsSincePilotUnlock()
         if (!StoryStateManager.isCorrupted(persistence)) chatSystem.resetUsedLines()
@@ -1222,7 +1664,7 @@ class HangarSurfaceView(
             persistence.clearFreshLoopStart()
             chatSystem.onFirstLaunch(state)
         } else {
-            chatSystem.onDeathReturn(state, pilotId)
+            chatSystem.onDeathReturn(state, pilotId, amount)
         }
 
         // Corruption: check if all crew are dead and crystal should unlock
@@ -1288,6 +1730,7 @@ class HangarSurfaceView(
         // Reset slot machine result state
         state.spinResultYen = 0
         state.spinResultUpgrade = null
+        state.pendingSpinUpgradeId = null
         state.spinResultSymbol = -1
         state.spinResultTime = 0
 

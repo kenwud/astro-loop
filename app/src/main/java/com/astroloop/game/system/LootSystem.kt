@@ -28,8 +28,8 @@ class LootSystem(
             spawnScorePickup(asteroid.position.x, asteroid.position.y, points, fromEnemy = false)
         }
 
-        // Spawn split asteroids
-        spawnSystem.spawnSplitAsteroids(asteroid)
+        // Spawn split asteroids — state carries the clock the health ramp reads
+        spawnSystem.spawnSplitAsteroids(asteroid, state)
 
         // Suppress upgrade drops in corruption runs or when fully upgraded
         if (!state.isCorruptionRun && !state.isFullyUpgraded()) {

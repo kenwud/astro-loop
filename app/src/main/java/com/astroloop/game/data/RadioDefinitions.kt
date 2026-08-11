@@ -9,18 +9,18 @@ object RadioDefinitions {
         // =====================================================================
 
         "shields_down" to mapOf(
-            "pilot_medic" to listOf("Shields are down! Watch yourself!", "No more shields — be careful!", "Shield generator's offline!"),
+            "pilot_medic" to listOf("Shields are down! Watch yourself!", "No more shields - be careful!", "Shield generator's offline!"),
             "pilot_rascal" to listOf("Shields popped! Time to get sneaky!", "No shields? No problem... maybe.", "We're naked out here!"),
             "pilot_brutus" to listOf("Shields gone.", "Hmph. No shields.", "Good. Now it's personal."),
-            "pilot_frost" to listOf("Shield buffer depleted.", "Running without shields. Suboptimal.", "Cold comfort — shields are gone."),
-            "pilot_dash" to listOf("Shields down! Gotta move faster!", "No shields — speed is our armor now!", "Lost shields! Dodge everything!"),
+            "pilot_frost" to listOf("Shield buffer depleted.", "Running without shields. Suboptimal.", "Cold comfort - shields are gone."),
+            "pilot_dash" to listOf("Shields down! Gotta move faster!", "No shields - speed is our armor now!", "Lost shields! Dodge everything!"),
             "pilot_ember" to listOf("Shields burned out!", "No shields? I'll burn brighter!", "We're exposed! Light 'em up!"),
             "pilot_fang" to listOf("Shields... gone. I feel the void.", "No shields. Darkness draws closer.", "Exposed. Good. Let them come."),
             "pilot_whiskers" to listOf("Shields are gone. How annoying.", "Ugh. No shields. Beneath me.", "I did NOT sign up for this."),
             "pilot_kraken" to listOf("Shield matrix offline.", "Tentacles brace for impact.", "No shields. The deep protects."),
             "pilot_havoc" to listOf("SHIELDS DOWN! LET'S GOOO!", "Who needs shields anyway?!", "Bare hull! Maximum excitement!"),
             "pilot_unit7" to listOf("Shield status: depleted.", "Warning: shield generator offline.", "Survival odds: recalculating."),
-            "pilot_astro" to listOf("Shields are down. Stay sharp.", "Lost shields — TB-26, watch our six.", "No shields. We've had worse.")
+            "pilot_astro" to listOf("Shields are down. Stay sharp.", "Lost shields - TB-26, watch our six.", "No shields. We've had worse.")
         ),
 
         "big_hit" to mapOf(
@@ -51,7 +51,7 @@ object RadioDefinitions {
             ),
             "pilot_ember" to listOf(
                 "That blow only fans the flames!",
-                "They hit hard — we'll hit harder!",
+                "They hit hard - we'll hit harder!",
                 "Pain is just fuel for the fire!"
             ),
             "pilot_fang" to listOf(
@@ -80,7 +80,7 @@ object RadioDefinitions {
                 "Structural damage logged. Caution."
             ),
             "pilot_astro" to listOf(
-                "Heavy hit — hull's holding. Barely.",
+                "Heavy hit - hull's holding. Barely.",
                 "Rattled TB-26's circuits. And mine.",
                 "Big impact. Shake it off."
             )
@@ -88,9 +88,9 @@ object RadioDefinitions {
 
         "low_health" to mapOf(
             "pilot_medic" to listOf(
-                "Hull's critical — out of bandages!",
+                "Hull's critical - out of bandages!",
                 "Flatlining! One more hit and done!",
-                "Vitals in the red — all of them!"
+                "Vitals in the red - all of them!"
             ),
             "pilot_rascal" to listOf(
                 "We're falling apart! Time to bail?",
@@ -113,7 +113,7 @@ object RadioDefinitions {
                 "Critical! Go go go go go!"
             ),
             "pilot_ember" to listOf(
-                "Barely a spark — don't go out!",
+                "Barely a spark - don't go out!",
                 "We're a dying ember! Not like this!",
                 "One breath from ashes! Fight on!"
             ),
@@ -143,7 +143,7 @@ object RadioDefinitions {
                 "Survival odds near zero. Noted."
             ),
             "pilot_astro" to listOf(
-                "Hull's critical — be smart here.",
+                "Hull's critical - be smart here.",
                 "Hanging by a thread. TB-26, steady.",
                 "One hit from done. Make it count."
             )
@@ -178,7 +178,7 @@ object RadioDefinitions {
             "pilot_ember" to listOf(
                 "RISEN FROM THE ASHES! Born to!",
                 "Can't kill a phoenix! I am fire!",
-                "Cinder to inferno — I LIVE AGAIN!"
+                "Cinder to inferno - I LIVE AGAIN!"
             ),
             "pilot_fang" to listOf(
                 "I tasted death. It tasted like me.",
@@ -439,7 +439,7 @@ object RadioDefinitions {
                 "Level 5. Performance: optimal."
             ),
             "pilot_astro" to listOf(
-                "Maxed — that's our big gun now.",
+                "Maxed - that's our big gun now.",
                 "Level five. TB-26, flag it primary."
             )
         ),
@@ -467,7 +467,7 @@ object RadioDefinitions {
             ),
             "pilot_ember" to listOf(
                 "Maxed! Inner flame burns brightest!",
-                "Full stacks — a fire fully kindled!"
+                "Full stacks - a fire fully kindled!"
             ),
             "pilot_fang" to listOf(
                 "Quiet power, fully awakened.",
@@ -498,7 +498,7 @@ object RadioDefinitions {
         "first_enemy" to mapOf(
             "pilot_medic" to listOf(
                 "Enemy ships! Here come patients.",
-                "Enemies! Don't get hurt — two hands!"
+                "Enemies! Don't get hurt - two hands!"
             ),
             "pilot_rascal" to listOf(
                 "Company! Bet they've got stuff!",
@@ -518,7 +518,7 @@ object RadioDefinitions {
             ),
             "pilot_ember" to listOf(
                 "Enemies! Fresh kindling!",
-                "Ships inbound — the pyre awaits!"
+                "Ships inbound - the pyre awaits!"
             ),
             "pilot_fang" to listOf(
                 "Prey. I hear their engines tremble.",
@@ -569,7 +569,7 @@ object RadioDefinitions {
             ),
             "pilot_ember" to listOf(
                 "A swarm! More fuel for the inferno!",
-                "They crowd the sky — burn them ALL!"
+                "They crowd the sky - burn them ALL!"
             ),
             "pilot_fang" to listOf(
                 "The swarm thickens. A feast.",
@@ -593,7 +593,7 @@ object RadioDefinitions {
             ),
             "pilot_astro" to listOf(
                 "Getting thick. TB-26, stay close.",
-                "Enemy count ramping up — stay sharp."
+                "Enemy count ramping up - stay sharp."
             )
         ),
 
@@ -644,7 +644,7 @@ object RadioDefinitions {
             ),
             "pilot_astro" to listOf(
                 "Serious haul. Drinks on me later.",
-                "TB-26, log that — best payday yet."
+                "TB-26, log that - best payday yet."
             )
         ),
 
@@ -700,7 +700,7 @@ object RadioDefinitions {
             "pilot_ember" to listOf(
                 "Try harder than that!",
                 "Close! That one singed us!",
-                "Barely dodged — flame won't flinch!"
+                "Barely dodged - flame won't flinch!"
             ),
             "pilot_fang" to listOf(
                 "I felt that one whisper past.",
@@ -767,7 +767,7 @@ object RadioDefinitions {
             "pilot_ember" to listOf(
                 "A chain of fire! One by one!",
                 "Kill streak! The blaze spreads!",
-                "One after another — inferno!"
+                "One after another - inferno!"
             ),
             "pilot_fang" to listOf(
                 "The hunt is bountiful tonight.",
@@ -796,7 +796,7 @@ object RadioDefinitions {
             ),
             "pilot_astro" to listOf(
                 "Three down fast. We're in the zone.",
-                "Streak — TB-26, keep the pressure.",
+                "Streak - TB-26, keep the pressure.",
                 "On a roll. Don't let up now."
             )
         ),
@@ -826,7 +826,7 @@ object RadioDefinitions {
             "pilot_brutus" to listOf("Four minutes. Getting good now."),
             "pilot_frost" to listOf("Four minutes. Survival curve: good."),
             "pilot_dash" to listOf("Four minutes and still flying fast!"),
-            "pilot_ember" to listOf("Four minutes — fire burns steady."),
+            "pilot_ember" to listOf("Four minutes - fire burns steady."),
             "pilot_fang" to listOf("Four minutes in the dark. Good."),
             "pilot_whiskers" to listOf("Four minutes. Better than most."),
             "pilot_kraken" to listOf("Four minutes. The current carries."),
@@ -836,12 +836,12 @@ object RadioDefinitions {
         ),
 
         "time_6min" to mapOf(
-            "pilot_medic" to listOf("Six minutes — getting hairy!"),
-            "pilot_rascal" to listOf("Six minutes! Dicey — I love it!"),
+            "pilot_medic" to listOf("Six minutes - getting hairy!"),
+            "pilot_rascal" to listOf("Six minutes! Dicey - I love it!"),
             "pilot_brutus" to listOf("Six minutes. Now it's a real fight."),
             "pilot_frost" to listOf("Six minutes. Threat density: rising."),
             "pilot_dash" to listOf("Six minutes! Getting crazy out here!"),
-            "pilot_ember" to listOf("Six minutes — crucible burns hotter!"),
+            "pilot_ember" to listOf("Six minutes - crucible burns hotter!"),
             "pilot_fang" to listOf("Six minutes. Darker prey now."),
             "pilot_whiskers" to listOf("Six minutes. I'm slightly impressed."),
             "pilot_kraken" to listOf("Six minutes. Pressure of the deep."),
@@ -856,9 +856,9 @@ object RadioDefinitions {
             "pilot_brutus" to listOf("Eight minutes. Respect."),
             "pilot_frost" to listOf("Eight minutes. Top percentile now."),
             "pilot_dash" to listOf("EIGHT MINUTES! We're LEGENDS!"),
-            "pilot_ember" to listOf("Eight minutes — forged in fire!"),
+            "pilot_ember" to listOf("Eight minutes - forged in fire!"),
             "pilot_fang" to listOf("Eight minutes. Few survive this."),
-            "pilot_whiskers" to listOf("Eight minutes. I'll admit — not bad."),
+            "pilot_whiskers" to listOf("Eight minutes. I'll admit - not bad."),
             "pilot_kraken" to listOf("Eight minutes in the abyss. Home."),
             "pilot_havoc" to listOf("EIGHT MINUTES! UNSTOPPABLE!"),
             "pilot_unit7" to listOf("8:00. Longevity: exceptional."),

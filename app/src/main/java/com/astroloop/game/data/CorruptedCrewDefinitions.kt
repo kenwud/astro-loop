@@ -39,7 +39,7 @@ object CorruptedCrewDefinitions {
         CorruptedPilot("corrupted_5", "pilot_dash", listOf(
             "Fast... faster... can't stop...",
             "Outran something. It's inside me.",
-            "Speed is life. Speed is life. Speed—",
+            "Speed is life. Speed is life. Speed...",
             "My legs won't stop. Won't stop.",
             "Momentum. Forward. Never back."
         )),

@@ -1,10 +1,13 @@
 package com.astroloop.game.hangar
 
 import com.astroloop.game.core.StoryStateManager
+import com.astroloop.game.core.GameConfig
+import com.astroloop.game.data.BossHintDefinitions
 import com.astroloop.game.data.BarConversation
 import com.astroloop.game.data.BarConversations
 import com.astroloop.game.data.CrystalFightLines
 import com.astroloop.game.data.LoopDefinitions
+import com.astroloop.game.data.TutorialDefinitions
 import com.astroloop.game.data.PilotDefinitions
 import com.astroloop.game.data.ReckoningRoundChatter
 import kotlin.random.Random
@@ -12,6 +15,19 @@ import kotlin.random.Random
 class ChatSystem {
 
     companion object {
+        /**
+         * TB-26's answer to a record haul, and Tobar's to a record time.
+         *
+         * Both ride on the end of the report line rather than taking one of their own, so each has
+         * to fit whatever is left of the 58-character budget once the greeting and the figure are
+         * in. That is why they are terse: "I'll pretend I'm not impressed." was 31 characters and
+         * could not survive the merge. `ReturnReportOneLineTest` holds the budget against a
+         * worst-case figure, so a longer line added here fails the suite rather than being
+         * silently ellipsized by `truncateToFit`.
+         */
+        val newBestYenReactions = listOf("Impressive.", "Busy day.", "Noted.")
+        val newBestTimeReactions = listOf("Not bad.", "Better.", "Noted.")
+
         const val CONVERSATION_COOLDOWN = 20f           // normal / Astro Loop
         const val LINE_PAUSE = 4.0f  // Pause between lines within a conversation
         const val DEATH_RETURN_FIRST_LINE_DELAY = 1.0f  // beat before the first return line lands
@@ -60,6 +76,7 @@ class ChatSystem {
 
     private val maxMessages = 20
     private var lastSpeaker: String = ""
+
     private val DESERT_FORESHADOW_CHANCE = 0.2f
 
     // No-repeat tracking — cleared on run return
@@ -607,6 +624,15 @@ class ChatSystem {
                         val hint = hints.random()
                         state.addChatMessage(hintGiver.callsign, hint, hintGiver.color)
                         state.hintShownForPilotIndex = nextHintIndex
+                        // Durable twin of the line above: the note left on that pilot's locked card
+                        // has to outlive the session the hint was spoken in.
+                        // Only the first hint about this pilot reveals the card. The hint itself
+                        // keeps firing at 30% until they are recruited, and re-arming the fade on
+                        // each one would pop the "?" back to full and fade it out again — the card
+                        // reverting to a mystery it is no longer in.
+                        if (state.persistence.setHintedPilotIndex(nextHintIndex)) {
+                            state.beginHintNoteReveal()
+                        }
                         return
                     }
                 }
@@ -820,21 +846,6 @@ class ChatSystem {
         appendOrQueue(state, lines)
     }
 
-    fun onReturnFromRun(state: HangarState, yen: Int) {
-        // Skip TB-26 return lines during corruption (TB-26 is gone)
-        if (StoryStateManager.isCorrupted(state.persistence)) return
-
-        val tbName = if (StoryStateManager.isAstroLoop(state.persistence)) "TOBAR" else "TB-26"
-        val lines = if (yen > 5000) {
-            listOf("Productive run. The coffers are grateful.", "That's a lot of yen. I mean, adequate.")
-        } else if (yen > 0) {
-            listOf("Back already?", "The hangar missed you. I didn't.")
-        } else {
-            listOf("Empty-handed. As expected.", "Zero yen. Bold strategy.")
-        }
-        state.addChatMessage(tbName, lines.random(), 0xFF88AACC.toInt())
-    }
-
     private fun formatTime(seconds: Float): String {
         val totalSec = seconds.toInt()
         val m = totalSec / 60
@@ -842,7 +853,7 @@ class ChatSystem {
         return "%d:%02d".format(m, s)
     }
 
-    fun onDeathReturn(state: HangarState, pilotId: String) {
+    fun onDeathReturn(state: HangarState, pilotId: String, yenEarned: Int = 0) {
         state.chatMessages.clear()
         state.activeConversation = null
         state.conversationLineIndex = 0
@@ -893,23 +904,21 @@ class ChatSystem {
             val bestFormatted = formatTime(best)
             val isNewBest = lastRun >= best - 0.1f
 
+            // One line either way, and "You survived for" stays on both — two phrasings for one
+            // report would read as two different messages. That is what holds the time reactions
+            // to eight characters: the stem is long and the figure grows with the run.
             when {
-                isNewBest -> {
-                    lines.add(ChatMessage("TOBAR", "Welcome back! You survived for $lastRunFormatted — new best!", 0xFF88AACC.toInt()))
-                    val reactions = listOf("Not bad.", "Keep pushing.", "That's more like it.")
-                    lines.add(ChatMessage("TOBAR", reactions.random(), 0xFF88AACC.toInt()))
-                }
-                else -> {
-                    lines.add(ChatMessage("TOBAR", "Welcome back! You survived for $lastRunFormatted.", 0xFF88AACC.toInt()))
-                    lines.add(ChatMessage("TOBAR", "Best is still $bestFormatted.", 0xFF88AACC.toInt()))
-                }
+                isNewBest -> lines.add(ChatMessage("TOBAR",
+                    "Welcome back! You survived for $lastRunFormatted - new best! ${newBestTimeReactions.random()}",
+                    0xFF88AACC.toInt()))
+                else -> lines.add(ChatMessage("TOBAR",
+                    "Welcome back! You survived for $lastRunFormatted. Best $bestFormatted.",
+                    0xFF88AACC.toInt()))
             }
             addBandanaCeremony(state, lines)
             queueDeathReturnLines(state, lines)
             return
         }
-
-        val tbName = if (StoryStateManager.isAstroLoop(state.persistence)) "TOBAR" else "TB-26"
 
         if (StoryStateManager.isCorrupted(state.persistence)) {
             val deadPilots = state.persistence.getDeadPilots()
@@ -941,8 +950,84 @@ class ChatSystem {
             return
         }
 
-        // TB-26 greeting — always first
-        lines.add(ChatMessage(tbName, "Welcome back, commander.", 0xFF88AACC.toInt()))
+        // Declared below the corruption branch on purpose: TB-26 is dead there and the crew speak
+        // for themselves, so the name he would be greeted under is not even in scope. Astro Loop
+        // returns further up, so by here this is always "TB-26" — kept as an expression only
+        // because onFirstLaunch and the hint paths share the same convention.
+        val tbName = if (StoryStateManager.isAstroLoop(state.persistence)) "TOBAR" else "TB-26"
+
+        // Onboarding owes a beat on the first two returns. Resolved up here because the yen report
+        // stands aside for it: those returns already run three TB-26 lines and MEDIC answering the
+        // empty air, and two more lines of takings on top bury the thing being taught. Reporting
+        // starts on the third return, when onboarding is done. Keyed off the beat rather than a
+        // return count so the two can never drift apart.
+        val tutorial = TutorialDefinitions.beatFor(state.persistence.getTutorialsShown())
+
+        // TB-26 greeting — always first, and it carries the run report rather than the report
+        // taking a beat of its own. Astro Loop does the same with survived time one branch up.
+        val previousBestYen = state.persistence.getBestRunYen()
+        // A run that took nothing has nothing to report, and "Best is still ¥0" is noise. Guarding
+        // here also keeps a blank run from being recorded as a best. Note the best IS still
+        // recorded on a silent onboarding return — the player earned it and the HUD showed it, so
+        // the first report must not quote a figure smaller than a tutorial run already took.
+        val isNewBestYen = yenEarned > 0 && state.persistence.updateBestRunYen(yenEarned)
+        val takings = GameConfig.formatYen(yenEarned)
+        when {
+            tutorial != null || yenEarned <= 0 ->
+                lines.add(ChatMessage(tbName, "Welcome back, commander.", 0xFF88AACC.toInt()))
+            // One line either way, greeting included. The greeting stays on a record run because
+            // "Welcome back, commander." is TB-26's, and the player's best run is the last return
+            // that should go ungreeted; that is what keeps the reaction pool terse.
+            isNewBestYen -> lines.add(ChatMessage(tbName,
+                "Welcome back, commander. $takings - new best! ${newBestYenReactions.random()}",
+                0xFF88AACC.toInt()))
+            else -> lines.add(ChatMessage(tbName,
+                "Welcome back, commander. $takings. Best ${GameConfig.formatYen(previousBestYen)}.",
+                0xFF88AACC.toInt()))
+        }
+
+        // Onboarding, on the first two returns only. Sits directly after the greeting, and its
+        // reaction REPLACES the deja vu line below rather than stacking on top of it.
+        if (tutorial != null) {
+            state.persistence.incrementTutorialsShown()
+            for (line in tutorial.tbLines) {
+                lines.add(ChatMessage(tbName, line, 0xFF88AACC.toInt()))
+            }
+            // MEDIC answers the empty air TB-26 is apparently talking to. She is the only pilot
+            // unlocked this early, so she is both the returning pilot and the reaction.
+            val medic = PilotDefinitions.pilots.find { it.id == "pilot_medic" }
+            if (medic != null) {
+                lines.add(ChatMessage(medic.callsign, tutorial.reaction, medic.color))
+            }
+            queueDeathReturnLines(state, lines)
+            return
+        }
+
+        // A hint owed from a failed ten-minute boss attempt, spent here. Checked after onboarding
+        // so a player good enough to reach the boss early still gets taught first — the hint stays
+        // pending and lands on the next return instead of being lost.
+        val hintTrack = state.persistence.getPendingBossHint()
+        if (hintTrack != null) {
+            val hint = BossHintDefinitions.hintFor(hintTrack, state.persistence.getBossFailures(hintTrack))
+            if (hint != null) {
+                state.persistence.setPendingBossHint(null)
+                lines.add(ChatMessage(tbName, hint, 0xFF88AACC.toInt()))
+                // Same fourth-wall cost as onboarding: whoever came back notices him addressing
+                // someone who is not in the room, and their reaction stands in for the deja vu line.
+                val returning = PilotDefinitions.pilots.find { it.id == pilotId }
+                if (returning != null) {
+                    lines.add(
+                        ChatMessage(
+                            returning.callsign,
+                            BossHintDefinitions.reactionFor(returning.callsign),
+                            returning.color
+                        )
+                    )
+                }
+                queueDeathReturnLines(state, lines)
+                return
+            }
+        }
 
         // Dead pilot's deja vu line
         val dejaVu = dejaVuLines[pilotId]

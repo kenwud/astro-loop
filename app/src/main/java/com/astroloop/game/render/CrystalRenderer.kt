@@ -187,10 +187,18 @@ class CrystalRenderer {
             canvas.drawLine(drawX1, drawY1, drawX2, drawY2, corePaint)
         }
 
-        // Draw text — pause only. Death crystals stay wordless: the crystalline
-        // freeze itself is the Time Crystal activating, hidden in plain sight.
-        if (isPause && textAlpha > 0f) {
-            val text = "PAUSED"
+        // Draw text. The pause says PAUSED; death says AGAIN.
+        //
+        // Death was wordless for a long time, on the reasoning that the crystalline freeze IS the
+        // Time Crystal activating and saying so out loud would spoil it. In practice nothing
+        // signalled that the moment meant anything, so it read as an ordinary game-over wipe. The
+        // word names the cost rather than the mechanic — this has happened before, and will again.
+        //
+        // Note the machinery was never removed: update() already drives textAlpha on the death
+        // path via DEATH_TEXT_THRESHOLD, and isComplete already waits for it to reach 1 before the
+        // hold begins. Only this guard was suppressing it.
+        if (textAlpha > 0f) {
+            val text = if (isPause) "PAUSED" else "AGAIN"
             val textX = screenWidth / 2f
             val textY = screenHeight * 0.25f
 

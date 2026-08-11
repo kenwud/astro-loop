@@ -51,6 +51,29 @@ class PassiveDefinitionsTest {
     }
 
     @Test
+    fun `extra_weapon_slot description promises the slot without threatening a loss`() {
+        val def = PassiveDefinitions.getPassiveDef("extra_weapon_slot")
+        assertNotNull(def)
+        assertEquals("Gain a 5th weapon slot", def!!.description)
+    }
+
+    /**
+     * Guard, not a new behaviour: the card really does drop max passive slots from 4 to 3, so
+     * simplifying the description is only honest while the effect line still prints the cost.
+     * Both are drawn on the pickup card (UpgradeSelectionRenderer draws description at :280 and
+     * effectPerStack at :313), so the player still sees the trade before choosing.
+     */
+    @Test
+    fun `extra_weapon_slot still prints its passive slot cost in the effect line`() {
+        val def = PassiveDefinitions.getPassiveDef("extra_weapon_slot")
+        assertNotNull(def)
+        assertTrue(
+            "The trade must stay visible at pickup, got: ${def!!.effectPerStack}",
+            def.effectPerStack.contains("-1 passive")
+        )
+    }
+
+    @Test
     fun `getDroneColor returns tb26 blue for astro with tb26 passive`() {
         assertEquals(
             PassiveDefinitions.DRONE_COLOR_TB26,

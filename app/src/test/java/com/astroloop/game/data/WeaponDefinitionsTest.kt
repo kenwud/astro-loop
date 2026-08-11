@@ -15,7 +15,21 @@ class WeaponDefinitionsTest {
         val weapon = WeaponDefinitions.getWeaponDef("pulse_cannon")
         assertNotNull(weapon)
         assertEquals("Pulse Cannon", weapon!!.name)
-        assertEquals(11f, weapon.baseDamage, 0.001f)
+    }
+
+    @Test
+    fun `the definitions carry no combat numbers`() {
+        // They used to, alongside the real ones on the Weapon subclasses, and the two had drifted
+        // apart in 24 places by the time anyone looked - this test previously asserted Pulse
+        // Cannon dealt 11 damage while the weapon itself dealt 15. Nothing read the copies, so
+        // nothing kept them honest. WeaponFactory.create(id) is the single source now.
+        val fields = WeaponDef::class.java.declaredFields.map { it.name }
+        for (banned in listOf("baseDamage", "baseCooldown", "baseProjectileSpeed", "baseProjectileCount")) {
+            assertFalse(
+                "$banned is back on WeaponDef - combat numbers belong on the Weapon class",
+                fields.contains(banned)
+            )
+        }
     }
 
     @Test

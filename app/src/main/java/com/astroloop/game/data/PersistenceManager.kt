@@ -2,6 +2,7 @@ package com.astroloop.game.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.astroloop.game.core.AudioMode
 import com.astroloop.game.core.StoryStage
 
 class PersistenceManager(context: Context) {
@@ -97,10 +98,18 @@ class PersistenceManager(context: Context) {
         editor.remove(KEY_BEST_SURVIVAL_SECONDS)
         editor.putInt(KEY_NEXT_PILOT_INDEX, 1)
         editor.remove(KEY_RUNS_SINCE_PILOT_UNLOCK)
+        // A fresh start is taught again, and has no takings to beat.
+        editor.remove(KEY_TUTORIALS_SHOWN)
+        editor.remove(KEY_BEST_RUN_YEN)
+        editor.remove(KEY_PENDING_BOSS_HINT)
+        for (track in BossHintDefinitions.Track.values()) {
+            editor.remove(bossFailureKey(track))
+        }
         // Reset codex discovery
         editor.putBoolean(KEY_CODEX_DISCOVERED, false)
         editor.putBoolean(KEY_CODEX_HINT_GIVEN, false)
         // Reset Astro hints
+        editor.remove(KEY_HINTED_PILOT_INDEX)
         editor.remove(KEY_ASTRO_HINT_COUNT)
         editor.remove(KEY_ASTRO_HINTED)
         // Reset first launch so bar intro plays again
@@ -201,6 +210,56 @@ class PersistenceManager(context: Context) {
     fun resetRunsSincePilotUnlock() = prefs.edit().putInt(KEY_RUNS_SINCE_PILOT_UNLOCK, 0).apply()
     fun setRunsSincePilotUnlock(value: Int) = prefs.edit().putInt(KEY_RUNS_SINCE_PILOT_UNLOCK, value).apply()
 
+    /**
+     * How many onboarding beats TB-26 has already delivered, so it doubles as the index of the
+     * next one. Counts beats rather than runs deliberately: a return that cannot show one (the
+     * first return of a new story loop routes to onFirstLaunch instead) must not burn a beat.
+     */
+    fun getTutorialsShown(): Int = prefs.getInt(KEY_TUTORIALS_SHOWN, 0)
+    fun incrementTutorialsShown() = prefs.edit().putInt(KEY_TUTORIALS_SHOWN, getTutorialsShown() + 1).apply()
+
+    /**
+     * Most yen taken in a single run, for TB-26's report on a normal return.
+     *
+     * Distinct from [getYen] (the wallet) and [getTotalYenEarned] (lifetime); neither can answer
+     * "was that a good run?". Mirrors [updateAstroLoopBestSeconds] by returning whether the value
+     * was beaten, so the caller can phrase the line without reading twice.
+     */
+    /**
+     * Failed attempts at the ten-minute boss, counted per track so each escalates on its own.
+     * A player who switches to Astro after three solo deaths starts the endurance track at one,
+     * which is right: they have just solved a different problem.
+     */
+    fun getBossFailures(track: BossHintDefinitions.Track): Int =
+        prefs.getInt(bossFailureKey(track), 0)
+
+    fun incrementBossFailures(track: BossHintDefinitions.Track) =
+        prefs.edit().putInt(bossFailureKey(track), getBossFailures(track) + 1).apply()
+
+    private fun bossFailureKey(track: BossHintDefinitions.Track) =
+        "boss_failures_${track.name.lowercase()}"
+
+    /**
+     * The hint owed on the next return, or null. A one-shot in the manner of
+     * [isReckoningJustWon]: the run that earns it ends long before the bar can speak.
+     */
+    fun getPendingBossHint(): BossHintDefinitions.Track? =
+        prefs.getString(KEY_PENDING_BOSS_HINT, null)
+            ?.let { name -> BossHintDefinitions.Track.values().firstOrNull { it.name == name } }
+
+    fun setPendingBossHint(track: BossHintDefinitions.Track?) {
+        if (track == null) prefs.edit().remove(KEY_PENDING_BOSS_HINT).apply()
+        else prefs.edit().putString(KEY_PENDING_BOSS_HINT, track.name).apply()
+    }
+
+    fun getBestRunYen(): Int = prefs.getInt(KEY_BEST_RUN_YEN, 0)
+    fun updateBestRunYen(yen: Int): Boolean {
+        return if (yen > getBestRunYen()) {
+            prefs.edit().putInt(KEY_BEST_RUN_YEN, yen).apply()
+            true
+        } else false
+    }
+
     // First launch detection
     fun isFirstLaunch(): Boolean = !prefs.contains("first_launch_complete")
     fun setFirstLaunchComplete() {
@@ -220,13 +279,51 @@ class PersistenceManager(context: Context) {
     fun setCodexHintGiven() = prefs.edit().putBoolean(KEY_CODEX_HINT_GIVEN, true).apply()
 
     // Audio/vibration mute settings
-    fun isAudioMuted(): Boolean = prefs.getBoolean("audio_muted", false)
-    fun setAudioMuted(muted: Boolean) = prefs.edit().putBoolean("audio_muted", muted).apply()
+    /**
+     * What the audio button is silencing.
+     *
+     * Falls back to the pre-1.2 `audio_muted` boolean when no mode has been chosen yet, so an
+     * installed copy that was muted stays muted instead of coming back to life on update. The
+     * first press of the new button writes a mode and the old flag stops mattering.
+     *
+     * Deliberately untouched by [resetAllProgress] — sound is a preference, not progress.
+     */
+    fun getAudioMode(): AudioMode = AudioMode.resolve(
+        storedName = prefs.getString(KEY_AUDIO_MODE, null),
+        legacyMuted = prefs.getBoolean("audio_muted", false)
+    )
+
+    fun setAudioMode(mode: AudioMode) = prefs.edit().putString(KEY_AUDIO_MODE, mode.name).apply()
 
     fun isVibrationMuted(): Boolean = prefs.getBoolean("vibration_muted", false)
     fun setVibrationMuted(muted: Boolean) = prefs.edit().putBoolean("vibration_muted", muted).apply()
 
     // Astro hint state (TB-26 hints after all non-Astro pilots recruited)
+    /**
+     * The highest pilot index whose recruitment hint has been spoken, or -1.
+     *
+     * Persisted where `HangarState.hintShownForPilotIndex` is not: that field also drives the
+     * guaranteed first fire and is meant to reset each launch, whereas the note left on the locked
+     * card has to survive the app closing or it is not a reminder. Deliberately two fields rather
+     * than one repurposed, so the hint cadence is untouched by the card.
+     */
+    fun getHintedPilotIndex(): Int = prefs.getInt(KEY_HINTED_PILOT_INDEX, -1)
+
+    /**
+     * @return true only when this is genuinely a *new* pilot being hinted about.
+     *
+     * The caller needs that answer, not just the write: the hint keeps firing at 30% until the
+     * pilot is finally recruited, and arming the card's reveal on each of those replays the
+     * cross-fade — popping the `?` back to full and fading it out again, so the card appears to
+     * revert to a mystery it is no longer in. Same shape as `updateBestRunYen`, which likewise
+     * reports whether the value moved.
+     */
+    fun setHintedPilotIndex(index: Int): Boolean {
+        if (index <= getHintedPilotIndex()) return false
+        prefs.edit().putInt(KEY_HINTED_PILOT_INDEX, index).apply()
+        return true
+    }
+
     fun getAstroHintCount(): Int = prefs.getInt(KEY_ASTRO_HINT_COUNT, 0)
     fun setAstroHintCount(count: Int) = prefs.edit().putInt(KEY_ASTRO_HINT_COUNT, count).apply()
     fun isAstroHinted(): Boolean = prefs.getBoolean(KEY_ASTRO_HINTED, false)
@@ -474,8 +571,13 @@ class PersistenceManager(context: Context) {
         private const val KEY_BEST_SURVIVAL_SECONDS = "best_survival_seconds"
         private const val KEY_NEXT_PILOT_INDEX = "next_pilot_index"
         private const val KEY_RUNS_SINCE_PILOT_UNLOCK = "runs_since_pilot_unlock"
+        private const val KEY_TUTORIALS_SHOWN = "tutorials_shown"
+        private const val KEY_BEST_RUN_YEN = "best_run_yen"
+        private const val KEY_AUDIO_MODE = "audio_mode"
+        private const val KEY_PENDING_BOSS_HINT = "pending_boss_hint"
         private const val KEY_CODEX_DISCOVERED = "codex_discovered"
         private const val KEY_CODEX_HINT_GIVEN = "codex_hint_given"
+        private const val KEY_HINTED_PILOT_INDEX = "hinted_pilot_index"
         private const val KEY_ASTRO_HINT_COUNT = "astro_hint_count"
         private const val KEY_ASTRO_HINTED = "astro_hinted"
         private const val KEY_ALL_EVOLUTIONS_HINTED = "all_evolutions_hinted"

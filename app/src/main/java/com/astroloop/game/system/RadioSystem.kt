@@ -59,10 +59,17 @@ class RadioSystem {
     fun showScriptedMessage(state: GameState, speaker: String, text: String, color: Int,
                             isBoss: Boolean = false, isCorrupted: Boolean = false,
                             isGhost: Boolean = false) {
-        if (isCorrupted) {
-            SoundManager.playSFX("sfx_radio_corrupted")
-        }
-        // Non-corrupted radio lines play no sting (sfx_radio_crackle removed by request).
+        // Every radio line gets a sting: corrupted chatter its own, everything else the crackle.
+        // "Everything else" is deliberately literal — it includes the desert flashback, so Tobar,
+        // Astro and COMMAND's orders all come over the radio there too.
+        //
+        // Both are effects, so they follow the effects channel: audible under ALL SOUND and
+        // EFFECTS ONLY, silent under NO SOUND and MUSIC ONLY. Nothing is exempt from that — see
+        // AudioMode, which dropped its combat/non-combat split precisely because the exception
+        // list made the MUSIC ONLY label untrue.
+        SoundManager.playSFX(
+            if (isCorrupted) "sfx_radio_corrupted" else "sfx_radio_crackle", 0.5f
+        )
         state.radioMessage = text
         state.radioSpeaker = speaker
         state.radioColor = color
@@ -77,10 +84,11 @@ class RadioSystem {
         // The reckoning is fully scripted: ambient chatter dies at this single choke point so
         // no trigger path can leak (the fight's lines travel via showScriptedMessage instead).
         if (state.reckoningActive) return
-        if (isCorrupted) {
-            SoundManager.playSFX("sfx_radio_corrupted")
-        }
-        // Non-corrupted radio lines play no sting (sfx_radio_crackle removed by request).
+        // Same rule as showScriptedMessage: corrupted gets its own sting, everything else the
+        // crackle, both on the effects channel.
+        SoundManager.playSFX(
+            if (isCorrupted) "sfx_radio_corrupted" else "sfx_radio_crackle", 0.5f
+        )
         state.radioMessage = text
         state.radioSpeaker = speaker
         state.radioColor = color

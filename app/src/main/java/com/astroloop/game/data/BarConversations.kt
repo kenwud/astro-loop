@@ -925,7 +925,7 @@ object BarConversations {
         // === DASH + HAVOC ===
         // ============================================================
         BarConversation("pilot_dash", "pilot_havoc", listOf(
-            ChatMessage("DASH", "Race you to the far wall and back — go!", 0xFFFFDD22.toInt()),
+            ChatMessage("DASH", "Race you to the far wall and back - go!", 0xFFFFDD22.toInt()),
             ChatMessage("HAVOC", "RACE?! YOU'RE ON! FULL SPEED! NO BRAKES!", 0xFFBBFF22.toInt()),
             ChatMessage("DASH", "There are definitely brakes!", 0xFFFFDD22.toInt()),
             ChatMessage("HAVOC", "NOT FOR ME!", 0xFFBBFF22.toInt())
@@ -1009,7 +1009,7 @@ object BarConversations {
         // === EMBER + WHISKERS ===
         // ============================================================
         BarConversation("pilot_ember", "pilot_whiskers", listOf(
-            ChatMessage("EMBER", "Careful, Whiskers — my flames have a mind of their own.", 0xFFFF6622.toInt()),
+            ChatMessage("EMBER", "Careful, Whiskers - my flames have a mind of their own.", 0xFFFF6622.toInt()),
             ChatMessage("WHISKERS", "My reflexes are faster than your flames.", 0xFFFFBB88.toInt()),
             ChatMessage("EMBER", "Want to test that theory?", 0xFFFF6622.toInt()),
             ChatMessage("WHISKERS", "I just did. You didn't notice me move.", 0xFFFFBB88.toInt())

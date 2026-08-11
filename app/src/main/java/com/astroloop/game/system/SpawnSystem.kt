@@ -6,6 +6,7 @@ import com.astroloop.game.core.GameState
 import com.astroloop.game.entity.*
 import com.astroloop.game.util.Vector2
 import kotlin.math.PI
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
@@ -17,11 +18,41 @@ class SpawnSystem(
     private var screenHeight: Float = 0f
 
     companion object {
+        /** Minutes of survival before asteroid health starts compounding. */
+        const val HEALTH_RAMP_START_MINUTES = 8f
+
+        /** Minutes for asteroid health to double once the ramp has started. */
+        const val HEALTH_RAMP_DOUBLING_MINUTES = 4.5f
+
         fun asteroidCount(mult: Float): Int = mult.roundToInt().coerceIn(1, 3)
 
         fun asteroidSpeedFactor(survivalTime: Float, mult: Float): Float {
             val speedMod = 1f + (survivalTime / 60f) * GameConfig.DIFFICULTY_SPEED_INCREASE
             return (speedMod * mult).coerceAtMost(GameConfig.ASTEROID_MAX_SPEED_FACTOR)
+        }
+
+        /**
+         * Health multiplier applied to an asteroid at spawn — **Astro Loop mode only**.
+         *
+         * Astro Loop is the endless mode the player scores a best time in, so a run that cannot
+         * end is a broken scoreboard. Every other difficulty lever clamps: count reaches its cap
+         * of 3 around 2.5 minutes, speed hits ASTEROID_MAX_SPEED_FACTOR, and the spawn interval
+         * floors at ASTEROID_MIN_SPAWN_RATE around 11.3 minutes. From there nothing about a run
+         * changes, which is why a strong build could survive indefinitely.
+         *
+         * Health is the one unclamped lever, so it carries the late game alone and is
+         * **deliberately uncapped**. It compounds rather than growing linearly: player damage is
+         * effectively fixed once a build maxes out around 10 minutes, so a linear ramp would only
+         * produce a long flat tail before the same inevitable loss.
+         *
+         * Not applied to normal runs or the corruption run, whose pacing is authored elsewhere.
+         */
+        fun asteroidHealthFactor(survivalTime: Float, astroLoopMode: Boolean): Float {
+            if (!astroLoopMode) return 1f
+            val minutes = survivalTime / 60f
+            if (minutes <= HEALTH_RAMP_START_MINUTES) return 1f
+            val doublings = (minutes - HEALTH_RAMP_START_MINUTES) / HEALTH_RAMP_DOUBLING_MINUTES
+            return 2f.pow(doublings)
         }
     }
 
@@ -86,6 +117,9 @@ class SpawnSystem(
 
         // Apply difficulty speed scaling (capped at ASTEROID_MAX_SPEED_FACTOR)
         asteroid.velocity.mul(asteroidSpeedFactor(state.survivalTime, state.difficultyMultiplier))
+
+        // Apply the Astro Loop endless health ramp (uncapped, no-op in every other mode)
+        asteroid.scaleHealth(asteroidHealthFactor(state.survivalTime, state.astroLoopMode))
 
         return asteroid
     }
@@ -162,7 +196,20 @@ class SpawnSystem(
         return AsteroidType.ROCK
     }
 
-    fun spawnSplitAsteroids(parent: Asteroid): List<Asteroid> {
+    /**
+     * The pieces a destroyed [parent] breaks into.
+     *
+     * [state] is here for the health ramp, which this path used to miss entirely: `scaleHealth`
+     * was called only in `spawnAsteroid`, so at 25 minutes a LARGE carried 675 health and the two
+     * MEDIUMs it produced carried 25. A maxed build spends most of its time shooting fragments, so
+     * the Endless ramp was doing a fraction of the work its constant implies.
+     *
+     * The factor comes from the clock, exactly as it does for a fresh spawn, rather than being
+     * inherited from the parent — one rule, and every asteroid on the field at minute T is worth
+     * minute T. Inheriting would let a rock that survived a long time seed weak fragments into the
+     * part of the run the ramp exists to make lethal.
+     */
+    fun spawnSplitAsteroids(parent: Asteroid, state: GameState): List<Asteroid> {
         if (!parent.shouldSplit()) return emptyList()
 
         val splitAsteroids = mutableListOf<Asteroid>()
@@ -186,6 +233,9 @@ class SpawnSystem(
 
             // Inherit some of parent velocity
             asteroid.velocity.add(parent.velocity.x * 0.3f, parent.velocity.y * 0.3f)
+
+            // Same ramp a fresh spawn gets — see the note on this function.
+            asteroid.scaleHealth(asteroidHealthFactor(state.survivalTime, state.astroLoopMode))
 
             // Brief immunity so clip weapons (SolarStorm, NovaBlast) don't instantly destroy children
             asteroid.fragmentImmunityTimer = 0.1f

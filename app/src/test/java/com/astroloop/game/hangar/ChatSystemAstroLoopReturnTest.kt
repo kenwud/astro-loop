@@ -67,11 +67,11 @@ class ChatSystemAstroLoopReturnTest {
         chatSystem.update(ChatSystem.DEATH_RETURN_FIRST_LINE_DELAY + 0.1f, state)
         assertEquals("Exactly one line after the first delivery tick", 1, state.chatMessages.size)
 
-        // Next line only lands after a full LINE_PAUSE, not sooner
-        chatSystem.update(0.5f, state)
-        assertEquals("Second line must wait out LINE_PAUSE", 1, state.chatMessages.size)
-        chatSystem.update(ChatSystem.LINE_PAUSE, state)
-        assertEquals(2, state.chatMessages.size)
+        // And that line is the whole report. The standing best used to arrive underneath it a
+        // LINE_PAUSE later; it now rides on the same line, so nothing follows.
+        chatSystem.update(ChatSystem.LINE_PAUSE * 3f, state)
+        assertEquals("The report is one line and nothing trails it", 1, state.chatMessages.size)
+        assertNull("and the conversation is finished", state.activeConversation)
     }
 
     /** Death-return lines are queued as a conversation — tick update() until delivered. */

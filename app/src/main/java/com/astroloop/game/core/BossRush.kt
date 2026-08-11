@@ -2,6 +2,10 @@ package com.astroloop.game.core
 
 /**
  * Pure math for the boss-fight EMP rush-in (both runs).
+ *
+ * The rule the numbers serve: the rusher always arrives, in a bounded time, from
+ * any starting distance, against a target fleeing at full speed the whole way.
+ * Everything below follows from that one guarantee.
  */
 object BossRush {
 
