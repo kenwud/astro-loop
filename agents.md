@@ -130,3 +130,23 @@ Phase 1: Gradle & Folder Structure
 * **Agent Prompt:**
   > "Run `./gradlew :desktopApp:run` (or inspect the desktop build error log). Fix any missing imports, unresolved platform references, or type mismatches in `desktopMain` or `commonMain` until the game window launches and renders on PC."
 * **Verification:** The game window opens on desktop, responds to mouse drag / pointer movement, plays audio, and maintains 60 FPS vector rendering parity with the original Android APK.
+
+---
+
+### Documentation & Reference Links
+
+* **JetBrains Compose Multiplatform Overview:**  
+  [Kotlin Multiplatform First App Guide](https://www.jetbrains.com/help/kotlin-multiplatform-dev/compose-multiplatform-create-first-app.html)  
+  *(Teaches how commonMain, desktopMain, and androidMain interact.)*
+
+* **Compose Canvas & Graphics Guide:**  
+  [Android Developer Compose Graphics Draw Overview](https://developer.android.com/develop/ui/compose/graphics/draw/overview)  
+  *(Gives exact syntax for DrawScope, drawCircle, drawPath, and drawIntoCanvas.)*
+
+* **Compose Pointer Input & Gestures:**  
+  [Android Developer Compose Gestures Guide](https://developer.android.com/develop/ui/compose/touch-input/pointer-input/understand-gestures)  
+  *(Provides reference for translating touch drag gestures to mouse drag events on PC.)*
+
+* **Expect/Actual Mechanism (Sound & Storage):**  
+  [Kotlin Multiplatform Connect to Platform APIs](https://kotlinlang.org/docs/multiplatform-connect-to-apis.html)  
+  *(Crucial for Phase 2 abstraction of SharedPreferences and sound files.)*
