@@ -1,17 +1,39 @@
-# Astro Loop: Compose Multiplatform Adaptation Project Overview & Mission Target
+# AGENTS.md — Astro-Loop Compose Multiplatform Porting Guidelines
 
+## Primary Objective & Target
 **Repository:** `PubDeer/astro-loop` (100% Kotlin, GPLv3)  
-**Goal:** Refactor the open-source Android roguelike shooter *Astro Loop* to Compose Multiplatform (CMP).  
-**Objective:** Maintain 100% parity with existing gameplay while enabling native desktop builds (`.exe`, Linux, macOS) alongside Android. The final adaptation will be formatted as a clean, non-disruptive Pull Request (PR) for the original author (`PubDeer`). If declined or unmerged, the fork will serve as the standalone foundation for a custom, moddable PC/Mobile roguelike.
+**Goal:** Complete a 1:1 Kotlin Multiplatform (CMP) port of the Android game *Astro-Loop* to Desktop (Windows JVM / Skia via Compose Multiplatform) and mobile from shared code (`commonMain`).  
+**Objective:** Maintain 100% parity with existing gameplay, vector visuals, sound design, and meta-progression loops (Ship Selection → Survival Run → Death/Game Over → Upgrade/Shop).
 
 ---
 
-## Architectural Principles
+## STRICT OPERATIONAL RULES FOR AI AGENTS
 
-* **Zero Logic Rewrites:** Retain existing game loops, collision math, ship/weapon stats, wave algorithms, and state management intact in `commonMain`.
-* **Platform Abstraction:** Decouple native Android APIs (`android.graphics.Canvas`, `android.view.View`, Android `Context`) in favor of platform-agnostic Kotlin/Compose primitives and Kotlin `expect`/`actual` declarations.
-* **Upstream Compatibility:** Maintain clean commit isolation so features, bug fixes, or PR merges can easily sync back and forth between the fork and upstream repo.
-* **Mod-Ready Foundation:** Keep data structures and asset pipelines decoupled from the view layer to prepare for future JSON/Lua/KTS mod loading (Mindustry-style).
+### 1. Absolute Prohibition of Mocking & Stubs
+* **Port the ENTIRE game.** Do NOT write placeholder game engines, fake state machines, dummy ship entities, or simplified UI overlays to force a quick build pass.
+* Do NOT ask to port individual systems or features piecemeal. The entire codebase in `app/src/main/java/com/astroloop/` MUST be migrated into `shared/src/commonMain/kotlin/com/astroloop/`.
+* **Zero Rewrites:** Preserve existing game loops, vector math, collision math, ship/weapon stats, wave algorithms, and state management intact in `commonMain`.
+
+### 2. Architectural Principles & Platform Abstraction
+* **Vector Graphics Engine:** Preserve custom vector drawing logic. Do NOT replace vector shapes with bitmap sprites or external game engines (Godot, LibGDX, Unity). All visuals must remain programmatic vector primitives on Canvas.
+* **Canvas Porting:** Replace `android.graphics.Canvas` and `android.graphics.Paint` drawing calls directly with Compose Multiplatform's `androidx.compose.foundation.Canvas` `DrawScope` API.
+* **Platform Abstraction (`expect`/`actual`):** Decouple native Android OS interfaces behind platform-agnostic Kotlin `expect`/`actual` declarations in `commonMain`:
+  * **Storage:** Abstract `SharedPreferences` / file I/O using multiplatform storage or `expect`/`actual` key-value pairs (using Java Preferences / File I/O on desktop).
+  * **Audio:** Abstract Android `SoundPool` / `MediaPlayer` audio wrappers so sound effects and background audio play natively on PC (via Java Sound / Clip) and mobile.
+  * **Hardware Context:** Remove all `android.content.Context`, `SurfaceHolder`, `Vibrator`, and native Android View references from `commonMain`.
+
+### 3. PC Input & Desktop Runner Requirements (`shared/src/desktopMain/`)
+* **Dual Control Mapping:** Map input handlers in `commonMain` to accept both Touch Drag (Mobile) and Mouse/Pointer Drag (Desktop PC).
+* **Keyboard Bindings:** Map WASD / Arrow Keys for steering/thrust, Space/Z for actions, and Esc/Enter for menu/shop navigation directly into `InputController`.
+* **Desktop Runner:** `Main.kt` and `DesktopSharedCanvas` MUST be structured to execute the full, migrated `GameLoop` / state machine natively on Windows.
+
+### 4. Bulk Migration & Verification Protocol
+* **Bulk Porting First:** Complete the file migration and Android API stripping across the ENTIRE codebase before running any build commands. Do NOT pause to fix intermediate compilation errors by creating fake stubs or dummy classes.
+* **Single Compile Check:** Once all original files are migrated into `commonMain`, run `.\gradlew.bat :shared:compileKotlinDesktop` ONCE to identify true missing multiplatform dependencies or platform type mismatches.
+* **No Automated App Execution:** Do NOT run `:shared:run`. Once compilation succeeds with zero errors, notify the developer to launch and test the application manually.
+
+### 5. Cleanup Protocol
+* Delete any temporary or generated stub files (e.g., placeholder `GameEngine.kt` or `TypesStubs.kt`) once the original codebase is fully migrated into `commonMain`.
 
 ---
 
@@ -28,125 +50,26 @@
 
 ---
 
-## Developer Environment & Testing Strategy
-
-To maximize development velocity and avoid heavy Android emulator dependencies, the project uses a **PC-First Workflow**:
-
-1. **Primary Development (`desktopMain`):** 90% of daily testing, physics verification, vector graphics rendering, and game state debugging are executed natively on Windows via `./gradlew :desktopApp:run`.
-2. **Mobile Validation (`androidMain`):** 10% of testing (touch scaling, mobile performance) is validated via compiled APKs (`./gradlew :composeApp:assembleDebug`):
-   * **BlueStacks:** Drag-and-drop the generated `.apk` directly into BlueStacks for fast desktop-based mobile emulation.
-   * **Physical Android Phone:** Transfer the `.apk` via USB storage, Google Drive, or email to test directly on real hardware without needing local ADB/USB debugging setups.
-
----
-
-## Step-by-Step Conversion Roadmap
-
-### Phase 1: Gradle & Multiplatform Setup
-* [ ] Convert single-module Android Gradle structure to a Kotlin Multiplatform (`kmpp`) layout (`commonMain`, `androidMain`, `desktopMain`).
-* [ ] Integrate JetBrains Compose Multiplatform Gradle plugins and Version Catalog (`libs.versions.toml`).
-* [ ] Move pure Kotlin data structures, game models, and math utilities directly into `commonMain`.
-
-### Phase 2: Input & Control Layer Abstraction
-* [ ] Extract single-finger touch dragging from `android.view.MotionEvent`.
-* [ ] Map input handlers in `commonMain` to accept both Touch Drag (Mobile) and Mouse Drag / Pointer Movement (Desktop PC).
-* [ ] Prepare optional WASD / Arrow Key binding structures for desktop playability.
-
-### Phase 3: Canvas Rendering Port
-* [ ] Replace `android.graphics.Canvas` and `android.graphics.Paint` drawing calls with Compose `DrawScope` / `androidx.compose.foundation.Canvas`.
-* [ ] Port vector shape paths, lines, circles, and particle effects to standard Compose `Path` and `DrawScope` primitives.
-* [ ] Verify vector graphic scaling and high-DPI rendering across arbitrary PC window sizes and mobile display ratios.
-
-### Phase 4: Audio & Storage Abstraction
-* [ ] Isolate Android `SharedPreferences` / file I/O behind an `expect`/`actual` interface or multiplatform storage library (e.g., `okio`).
-* [ ] Abstract native audio playback wrappers (`expect`/`actual`) so sound effects execute cleanly on desktop JVM (Java Sound) and Android (`SoundPool` / `MediaPlayer`).
-
-### Phase 5: Desktop Packaging & Polishing
-* [ ] Configure Gradle desktop distribution settings (`packageVersion`, target formats, executable icons).
-* [ ] Test native `.exe` build execution on Windows without emulator or IDE dependencies.
-* [ ] Prepare clean PR documentation, architectural summary, and build instructions for `PubDeer`.
-
----
-
 ## AI Agent Directives & Guardrails
-
-When generating code or refactoring files for this project, AI agents must adhere to the following rules:
 
 * **Preserve Vector Math:** Do not replace custom vector drawing logic with bitmap sprites. All visuals must remain programmatic vector primitives on Canvas.
 * **Avoid Engine Bloat:** Do not introduce external game engines (Godot, LibGDX, Unity) or heavy third-party game frameworks. Keep the app lightweight and native to Compose.
 * **Strict Expect/Actual Isolation:** Any code requiring platform-specific handles (e.g., Android `Context` or Desktop Window Managers) must be isolated behind standard Kotlin `expect`/`actual` declarations.
 * **Clean Code Style:** Follow standard Kotlin coding conventions, utilizing functional idioms and immutable state models where applicable.
-* **Prioritize PC Execution:** Always ensure code introduced in `commonMain` compiles and runs smoothly under the `:desktopApp:run` target.
+* **Prioritize PC Execution:** Ensure all shared code builds cleanly for the desktop JVM target.
 
 ---
 
-## Future Expansion (Post-Adaptation Roadmap)
-
-* **Mindustry-Style Modding Engine:** Implement a runtime modloader reading external `.json` configuration packs for custom ships, enemy behaviors, and weapon trees.
-* **Steam Deck / Gamepad Support:** Map controller inputs to vector aiming and movement vectors.
-* **Custom Desktop UI:** Add mouse hover states, keybinding config screens, and customizable graphics scaling options.
-
-## AI Execution & Prompting Protocol (4-Phase Workflow)
-
-To prevent context exhaustion and build failures, AI agents must work through the conversion in four isolated, sequential phases. **Do not execute multi-phase tasks in a single prompt.**
-
-
-Phase 1: Gradle & Folder Structure
-└── Phase 2: Audio & Storage Abstraction (Expect/Actual)
-└── Phase 3: Canvas & Input Port (File-by-File)
-└── Phase 4: Desktop Run & Parity Verification
-
----
-
-### Phase 1: Directory Restructuring & Gradle Setup
-* **Scope:** Re-organize the project module hierarchy and update build scripts.
-* **Rules:** Move pure Kotlin logic (wave math, collision, data models) into `commonMain`. Do **not** touch rendering or input logic yet.
-* **Agent Prompt:**
-  > "Read `AGENTS.md`. Refactor the Gradle build configuration (`build.gradle.kts` and `libs.versions.toml`) to a JetBrains Compose Multiplatform project layout targeting `commonMain`, `androidMain`, and `desktopMain`. Create the folder structure and move all pure Kotlin data models, wave/math utilities, and game state classes into `commonMain` without altering any logic."
-* **Verification:** Run `./gradlew check` or sync Gradle in your IDE to ensure `commonMain` compiles without missing dependencies.
-
----
-
-### Phase 2: Storage & Audio Abstraction (`expect`/`actual`)
-* **Scope:** Decouple native Android OS interfaces from game logic.
-* **Rules:** Isolate `SharedPreferences` and sound engine code behind Kotlin `expect` declarations in `commonMain`.
-* **Agent Prompt:**
-  > "Identify all references to `android.content.Context`, `SharedPreferences`, and Android audio APIs (`SoundPool`/`MediaPlayer`). Create platform-agnostic `expect` class/interface definitions in `commonMain` for persistent key-value storage and sound playback. Then, create the corresponding `actual` implementations for `androidMain` (using Android APIs) and `desktopMain` (using Java Preferences / Java Sound)."
-* **Verification:** Confirm that no class remaining in `commonMain` imports `android.content.Context` or `android.media.*`.
-
----
-
-### Phase 3: Canvas Rendering & Input Port
-* **Scope:** Translate drawing loops and input listeners to Compose Multiplatform primitives.
-* **Rules:** Process rendering files **one file at a time**. Do not convert sprite/vector math—only change the drawing handle.
-* **Agent Prompt (Repeat per file):**
-  > "Take [File_Name.kt] and convert its `android.graphics.Canvas` and `android.graphics.Paint` drawing logic to Compose Multiplatform's `androidx.compose.foundation.Canvas` `DrawScope` API. Translate native `MotionEvent` drag listeners to Compose `pointerInput` gesture detectors in `commonMain`. Ensure coordinate scaling remains resolution-independent."
-* **Verification:** Ensure zero `android.graphics.*` imports exist in `commonMain`.
-
----
-
-### Phase 4: Desktop Build & Parity Verification
-* **Scope:** Compile and run natively on Windows/Desktop.
-* **Rules:** Debug compiler or runtime errors iteratively.
-* **Agent Prompt:**
-  > "Run `./gradlew :desktopApp:run` (or inspect the desktop build error log). Fix any missing imports, unresolved platform references, or type mismatches in `desktopMain` or `commonMain` until the game window launches and renders on PC."
-* **Verification:** The game window opens on desktop, responds to mouse drag / pointer movement, plays audio, and maintains 60 FPS vector rendering parity with the original Android APK.
-
----
-
-### Documentation & Reference Links
+## Documentation & Reference Links
 
 * **JetBrains Compose Multiplatform Overview:**  
   [Kotlin Multiplatform First App Guide](https://www.jetbrains.com/help/kotlin-multiplatform-dev/compose-multiplatform-create-first-app.html)  
-  *(Teaches how commonMain, desktopMain, and androidMain interact.)*
 
 * **Compose Canvas & Graphics Guide:**  
   [Android Developer Compose Graphics Draw Overview](https://developer.android.com/develop/ui/compose/graphics/draw/overview)  
-  *(Gives exact syntax for DrawScope, drawCircle, drawPath, and drawIntoCanvas.)*
 
 * **Compose Pointer Input & Gestures:**  
   [Android Developer Compose Gestures Guide](https://developer.android.com/develop/ui/compose/touch-input/pointer-input/understand-gestures)  
-  *(Provides reference for translating touch drag gestures to mouse drag events on PC.)*
 
 * **Expect/Actual Mechanism (Sound & Storage):**  
-  [Kotlin Multiplatform Connect to Platform APIs](https://kotlinlang.org/docs/multiplatform-connect-to-apis.html)  
-  *(Crucial for Phase 2 abstraction of SharedPreferences and sound files.)*
+  [Kotlin Multiplatform Connect to Platform APIs](https://kotlinlang.org/docs/multiplatform-connect-to-apis.html)
